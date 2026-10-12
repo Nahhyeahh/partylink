@@ -1,0 +1,88 @@
+name: Emulator files
+
+# Packs RetroArch and the cores PartyLink uses into one zip and publishes it
+# as a GitHub Release in this repo, so every player's app downloads the exact
+# same files and can check them against a pinned SHA-256.
+#
+# RetroArch's own downloads (buildbot.libretro.com) are 7z archives with every
+# core in one file, so the app can't use them directly. This runs once per
+# RetroArch version: if the release already exists, it only prints the zip's
+# SHA-256 for apps/web/src/emulators.ts.
+on:
+  push:
+    paths: [".github/workflows/emulator-files.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  RETROARCH_VERSION: "1.22.2"
+  CORES: "pcsx_rearmed snes9x fceumm mgba genesis_plus_gx"
+
+jobs:
+  retroarch:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Pack RetroArch and cores
+        run: |
+          set -euo pipefail
+          tag="retroarch-$RETROARCH_VERSION"
+          asset="RetroArch-$RETROARCH_VERSION-partylink-win64.zip"
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists; not packing again."
+            exit 0
+          fi
+
+          base="https://buildbot.libretro.com/stable/$RETROARCH_VERSION/windows/x86_64"
+          mkdir dl && cd dl
+          curl -fsSL --retry 3 -o RetroArch.7z "$base/RetroArch.7z"
+          curl -fsSL --retry 3 -o cores.7z "$base/RetroArch_cores.7z"
+          sha256sum *.7z
+          7z x -y -oretroarch RetroArch.7z >/dev/null
+          7z x -y -ocores cores.7z >/dev/null
+
+          # The archives may wrap everything in a top-level folder.
+          app=$(dirname "$(find retroarch -iname retroarch.exe -print -quit)")
+          echo "RetroArch folder: $app"
+          mkdir -p "$app/cores" "$app/info"
+          for core in $CORES; do
+            dll=$(find cores -iname "${core}_libretro.dll" -print -quit)
+            test -n "$dll" || { echo "Missing core $core"; exit 1; }
+            cp "$dll" "$app/cores/"
+            info=$(find cores retroarch -iname "${core}_libretro.info" -print -quit || true)
+            if [ -n "$info" ]; then cp "$info" "$app/info/"; else echo "No .info for $core"; fi
+          done
+          # Only the cores PartyLink uses.
+          find "$app/cores" -name '*.dll' ! \( $(printf -- '-name %s_libretro.dll -o ' $CORES) -false \) -delete
+
+          cat > "$app/PARTYLINK-SOURCE.txt" <<EOF
+          RetroArch $RETROARCH_VERSION for Windows (x86_64) from https://buildbot.libretro.com/stable/$RETROARCH_VERSION/windows/x86_64/
+          with these cores from the same release: $CORES.
+          RetroArch is GPLv3: source at https://github.com/libretro/RetroArch/tree/v$RETROARCH_VERSION
+          Core sources: https://github.com/libretro (pcsx_rearmed, snes9x, libretro-fceumm, mgba, Genesis-Plus-GX).
+          Packed unchanged by PartyLink's "Emulator files" workflow.
+          EOF
+
+          du -sh "$app"; ls "$app" "$app/cores" "$app/info"
+          (cd "$app" && zip -qr -9 "$GITHUB_WORKSPACE/$asset" .)
+          ls -l "$GITHUB_WORKSPACE/$asset"
+
+      - name: Publish the release
+        run: |
+          set -euo pipefail
+          if [ -f "$ASSET" ]; then
+            gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --prerelease --latest=false \
+              --title "Emulator files: RetroArch $RETROARCH_VERSION" \
+              --notes "Downloaded by the PartyLink app when someone plays a PS1, SNES, NES, GBA or Mega Drive game. You don't need to download this yourself; get the app from the latest PartyLink release. Sources are listed in PARTYLINK-SOURCE.txt inside the zip."
+          else
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$ASSET"
+          fi
+          echo "SHA-256 for apps/web/src/emulators.ts:"
+          sha256sum "$ASSET"
+          echo "Size in MB: $(( $(stat -c %s "$ASSET") / 1000000 ))"
