@@ -5,7 +5,7 @@
 import type { GameSystem } from "@partylink/protocol";
 
 export interface EmulatorRelease {
-  emulator: "dolphin-mpn";
+  emulator: "dolphin-mpn" | "retroarch";
   /** Shown to players. */
   name: string;
   tag: string;
@@ -25,9 +25,54 @@ export const DOLPHIN: EmulatorRelease = {
   megabytes: 147,
 };
 
+/**
+ * RetroArch with the PS1, SNES, NES and Mega Drive cores, packed by this
+ * repo's "Emulator files" workflow: https://github.com/Nahhyeahh/partylink/releases/tag/retroarch-1.22.2
+ */
+export const RETROARCH: EmulatorRelease = {
+  emulator: "retroarch",
+  name: "RetroArch",
+  tag: "retroarch-1.22.2",
+  asset: "RetroArch-1.22.2-partylink-win64.zip",
+  sha256: "48279ba9d403080ea232fe4b3ebf311c799779a1bf9be26f949c909240c754b1",
+  megabytes: 278,
+};
+
 /** The emulator for a console, or null if PartyLink can't start its games yet. */
 export function emulatorFor(system: GameSystem): EmulatorRelease | null {
-  return system === "gc" || system === "wii" ? DOLPHIN : null;
+  switch (system) {
+    case "gc":
+    case "wii":
+      return DOLPHIN;
+    case "ps1":
+    case "snes":
+    case "nes":
+    case "md":
+      return RETROARCH;
+    default:
+      return null;
+  }
+}
+
+export type Relay = "nyc" | "madrid" | "saopaulo" | "singapore";
+
+/**
+ * The libretro relay server nearest the host, guessed from the PC's time
+ * zone. Every player's game traffic goes through it.
+ */
+export function nearestRelay(timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? ""): Relay {
+  const [region, city = ""] = timeZone.split("/");
+  if (region === "Europe" || region === "Africa") return "madrid";
+  if (region === "Asia" || region === "Australia" || region === "Pacific") return "singapore";
+  if (region === "America" && /Sao_Paulo|Argentina|Santiago|Bogota|Lima|Caracas|Montevideo|Asuncion|La_Paz/.test(city))
+    return "saopaulo";
+  return "nyc";
+}
+
+/** A password for the host's RetroArch room, which only the party learns. */
+export function roomPassword(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  return Array.from(bytes, (b) => "abcdefghijkmnpqrstuvwxyz23456789"[b % 32]).join("");
 }
 
 export const VC_RUNTIME_URL = "https://aka.ms/vs/17/release/vc_redist.x64.exe";

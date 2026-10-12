@@ -95,8 +95,11 @@ export const GAME_COPY_STATES = ["checking", "match", "missing", "no-app"] as co
 export const gameCopySchema = z.enum(GAME_COPY_STATES);
 export type GameCopy = z.infer<typeof gameCopySchema>;
 
-/** An emulator netplay room code, such as Dolphin's 8-character traversal code. */
-const roomCode = z.string().regex(/^[A-Za-z0-9]{4,32}$/);
+/**
+ * What friends' emulators need to join the host: Dolphin's 8-character
+ * traversal code, or RetroArch's `relay|port|session|password`.
+ */
+const roomCode = z.string().regex(/^[A-Za-z0-9+/=.|-]{4,200}$/);
 
 /** A started own game. The host's emulator hosts it; everyone else joins with the room code. */
 export const playSessionSchema = z.object({

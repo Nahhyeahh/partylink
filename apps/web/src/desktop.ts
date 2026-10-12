@@ -52,6 +52,9 @@ interface ReleaseArg {
 const releaseArg = ({ emulator, tag, asset, sha256 }: ReleaseArg): ReleaseArg => ({ emulator, tag, asset, sha256 });
 
 export type DolphinLaunch = { mode: "host"; sha1: string } | { mode: "join"; code: string };
+export type RetroArchLaunch =
+  | { mode: "host"; sha1: string; relay: string; password: string }
+  | { mode: "join"; sha1: string; code: string };
 
 export const desktop = {
   getGamesFolder: () => invoke<string | null>("get_games_folder"),
@@ -71,4 +74,8 @@ export const desktop = {
   onEmulatorExited: (handler: (emulator: string) => void) =>
     listen<string>("emulator-exited", (event) => handler(event.payload)),
   readDolphinRoomCode: () => invoke<string | null>("read_dolphin_room_code"),
+  launchRetroArch: (release: ReleaseArg, launch: RetroArchLaunch, nickname: string, players: number) =>
+    invoke<void>("launch_retroarch", { release: releaseArg(release), launch, nickname, players }),
+  /** The host's relay room as `relay|port|session`, once RetroArch has announced it. */
+  findRetroArchRoom: (nickname: string) => invoke<string | null>("find_retroarch_room", { nickname }),
 };

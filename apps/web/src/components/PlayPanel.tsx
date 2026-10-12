@@ -1,7 +1,7 @@
 import type { LobbyState, OwnGame, PlaySession } from "@partylink/protocol";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { desktop, type DolphinLaunch, isDesktop } from "../desktop";
-import { type EmulatorRelease, emulatorFor, VC_RUNTIME_URL } from "../emulators";
+import { desktop, isDesktop } from "../desktop";
+import { type EmulatorRelease, emulatorFor, nearestRelay, roomPassword, VC_RUNTIME_URL } from "../emulators";
 import { type EmulatorSetup, errorText, useEmulatorSetup } from "../emulatorSetup";
 
 type Window = "idle" | "opening" | "open" | "closed";
@@ -41,6 +41,7 @@ export function PlayPanel({ lobby, game, session, playerId, onRoomCode, onEnd }:
           isHost={isHost}
           hostName={host?.name ?? "the host"}
           nickname={me?.name ?? "Player"}
+          players={lobby.players.length}
           onRoomCode={onRoomCode}
         />
       ) : (
@@ -61,32 +62,56 @@ interface StepsProps {
   isHost: boolean;
   hostName: string;
   nickname: string;
+  players: number;
   onRoomCode: (code: string) => void;
 }
 
-function EmulatorSteps({ release, game, session, isHost, hostName, nickname, onRoomCode }: StepsProps) {
+function EmulatorSteps({ release, game, session, isHost, hostName, nickname, players, onRoomCode }: StepsProps) {
   const { setup, retry } = useEmulatorSetup(release);
   const [windowState, setWindowState] = useState<Window>("idle");
   const [launchError, setLaunchError] = useState<string | null>(null);
   const launched = useRef<string | null>(null);
-  // A room code already on the clipboard before Dolphin opened belongs to an
-  // older game, so the host's app ignores it.
+  const retro = release.emulator === "retroarch";
+  // A room code already on the clipboard before Dolphin opened (or already in
+  // RetroArch's lobby list) belongs to an older game, so the host's app ignores it.
   const staleCode = useRef<string | null>(null);
+  // The host's RetroArch room password, made once per game.
+  const password = useRef<{ startedAt: number; value: string } | null>(null);
+  // True from opening the host's RetroArch until its new room has been shared.
+  const awaitingRoom = useRef(false);
 
   const launch = useCallback(
-    async (how: DolphinLaunch) => {
+    async (mode: "host" | "join", code: string | null) => {
       setLaunchError(null);
       setWindowState("opening");
       try {
-        if (how.mode === "host") staleCode.current = await desktop.readDolphinRoomCode().catch(() => null);
-        await desktop.launchDolphin(release, how, nickname);
+        if (retro) {
+          if (mode === "host") {
+            if (password.current?.startedAt !== session.startedAt)
+              password.current = { startedAt: session.startedAt, value: roomPassword() };
+            // A room already listed under this name is from an earlier game or window.
+            staleCode.current = await desktop.findRetroArchRoom(nickname).catch(() => null);
+            const how = { mode, sha1: game.sha1, relay: nearestRelay(), password: password.current.value } as const;
+            await desktop.launchRetroArch(release, how, nickname, players);
+            awaitingRoom.current = true;
+          } else {
+            await desktop.launchRetroArch(release, { mode, sha1: game.sha1, code: code ?? "" }, nickname, players);
+          }
+        } else {
+          if (mode === "host") staleCode.current = await desktop.readDolphinRoomCode().catch(() => null);
+          await desktop.launchDolphin(
+            release,
+            mode === "host" ? { mode, sha1: game.sha1 } : { mode, code: code ?? "" },
+            nickname,
+          );
+        }
         setWindowState("open");
       } catch (error) {
         setWindowState("closed");
         setLaunchError(errorText(error));
       }
     },
-    [release, nickname],
+    [release, retro, nickname, players, game.sha1, session.startedAt],
   );
 
   useEffect(() => {
@@ -110,34 +135,60 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, onR
     const key = isHost ? `host:${session.startedAt}` : joinCode ? `join:${session.startedAt}:${joinCode}` : null;
     if (!key || launched.current === key) return;
     launched.current = key;
-    void launch(isHost ? { mode: "host", sha1: game.sha1 } : { mode: "join", code: joinCode! });
-  }, [setup.status, isHost, joinCode, session.startedAt, game.sha1, launch]);
+    void launch(isHost ? "host" : "join", joinCode);
+  }, [setup.status, isHost, joinCode, session.startedAt, launch]);
 
-  // The host clicks Copy in Dolphin; pick the code up and share it.
+  // Pick up the host's room code and share it. Dolphin: the host clicks Copy
+  // and it lands on the clipboard. RetroArch: its room appears in libretro's
+  // lobby list a few seconds after it opens.
   const sharedCode = session.roomCode;
   useEffect(() => {
     if (!isHost || windowState !== "open") return;
-    const timer = setInterval(async () => {
-      const code = await desktop.readDolphinRoomCode().catch(() => null);
-      if (code && code !== staleCode.current && code !== sharedCode) onRoomCode(code);
-    }, 1000);
+    const timer = setInterval(
+      async () => {
+        if (retro) {
+          if (!awaitingRoom.current || !password.current) return;
+          const room = await desktop.findRetroArchRoom(nickname).catch(() => null);
+          if (!room || room === staleCode.current) return;
+          const code = `${room}|${password.current.value}`;
+          if (code !== sharedCode) {
+            awaitingRoom.current = false;
+            onRoomCode(code);
+          }
+        } else {
+          const code = await desktop.readDolphinRoomCode().catch(() => null);
+          if (code && code !== staleCode.current && code !== sharedCode) onRoomCode(code);
+        }
+      },
+      retro ? 4000 : 1000,
+    );
     return () => clearInterval(timer);
-  }, [isHost, windowState, sharedCode, onRoomCode]);
+  }, [isHost, retro, windowState, sharedCode, nickname, onRoomCode]);
 
   if (setup.status !== "ready") return <SetupMessage setup={setup} release={release} onRetry={retry} />;
 
-  const reopen = () => void launch(isHost ? { mode: "host", sha1: game.sha1 } : { mode: "join", code: session.roomCode ?? "" });
+  const reopen = () => void launch(isHost ? "host" : "join", session.roomCode);
 
   return (
     <div className="play-steps">
-      {isHost ? (
+      {isHost && retro ? (
+        <p>
+          {windowState === "opening" || windowState === "idle"
+            ? `Opening ${release.name}…`
+            : !session.roomCode
+              ? `${release.name} is open. Setting up the room for your friends…`
+              : `Your friends' ${release.name} is joining. They drop into the game as they connect.`}
+        </p>
+      ) : isHost ? (
         <HostSteps release={release} code={session.roomCode} windowState={windowState} onRoomCode={onRoomCode} />
       ) : (
         <p>
           {!session.roomCode
             ? `Waiting for ${hostName} to open the game in ${release.name}…`
             : windowState === "open"
-              ? `${release.name} is open and joining ${hostName}'s game. ${hostName} starts it from ${release.name}.`
+              ? retro
+                ? `${release.name} is open and joining ${hostName}'s game.`
+                : `${release.name} is open and joining ${hostName}'s game. ${hostName} starts it from ${release.name}.`
               : `Joining ${hostName}'s game…`}
         </p>
       )}
@@ -148,9 +199,19 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, onR
       )}
 
       <p className="muted small">
-        Plug in an Xbox-style controller before {release.name} opens. To change buttons, use Controllers in{" "}
-        {release.name}'s menu.
-        {game.system === "wii" && " Wii games that use the Wii Remote need it set up there too."}
+        {retro ? (
+          <>
+            Plug in an Xbox-style controller before {release.name} opens. Press F1 for {release.name}'s menu, where
+            you can change buttons or quit.
+            {game.system === "ps1" && players >= 3 && " A PS1 multitap is plugged in, so games that support it take up to 4 players."}
+          </>
+        ) : (
+          <>
+            Plug in an Xbox-style controller before {release.name} opens. To change buttons, use Controllers in{" "}
+            {release.name}'s menu.
+            {game.system === "wii" && " Wii games that use the Wii Remote need it set up there too."}
+          </>
+        )}
       </p>
     </div>
   );

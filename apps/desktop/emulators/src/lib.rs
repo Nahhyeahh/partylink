@@ -20,12 +20,17 @@ pub enum Emulator {
     /// The Mario Party Netplay build of Dolphin, for GameCube and Wii games.
     /// It adds command-line options to host and join netplay sessions.
     DolphinMpn,
+    /// RetroArch with the cores PartyLink uses, packed into one zip by this
+    /// repo's "Emulator files" workflow (RetroArch's own downloads are 7z files
+    /// holding every core).
+    RetroArch,
 }
 
 impl Emulator {
     pub fn from_id(id: &str) -> Option<Self> {
         match id {
             "dolphin-mpn" => Some(Self::DolphinMpn),
+            "retroarch" => Some(Self::RetroArch),
             _ => None,
         }
     }
@@ -33,19 +38,22 @@ impl Emulator {
     pub fn id(self) -> &'static str {
         match self {
             Self::DolphinMpn => "dolphin-mpn",
+            Self::RetroArch => "retroarch",
         }
     }
 
-    /// Downloads only ever come from this project's GitHub releases.
+    /// Downloads only ever come from these GitHub releases.
     fn release_base(self) -> &'static str {
         match self {
             Self::DolphinMpn => "https://github.com/MarioPartyNetplay/Dolphin-MPN/releases/download",
+            Self::RetroArch => "https://github.com/Nahhyeahh/partylink/releases/download",
         }
     }
 
     pub fn exe_name(self) -> &'static str {
         match self {
             Self::DolphinMpn => "Dolphin-MPN.exe",
+            Self::RetroArch => "retroarch.exe",
         }
     }
 }
@@ -174,7 +182,9 @@ pub fn install_from_zip(release: &Release, zip_path: &Path, root: &Path) -> Resu
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
         // enclosed_name rejects absolute paths and "..", so nothing lands outside the folder.
-        let Some(relative) = entry.enclosed_name() else { continue };
+        let Some(relative) = entry.enclosed_name() else {
+            continue;
+        };
         let out = staging.join(relative);
         if entry.is_dir() {
             fs::create_dir_all(&out)?;
@@ -210,13 +220,14 @@ pub fn is_dolphin_host_code(text: &str) -> bool {
 
 /// Keeps names safe to pass as a `-C key=value` option.
 fn clean_nickname(name: &str) -> String {
-    let cleaned: String = name
-        .chars()
-        .filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.'))
-        .take(20)
-        .collect();
+    let cleaned: String =
+        name.chars().filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.')).take(20).collect();
     let cleaned = cleaned.trim();
-    if cleaned.is_empty() { "Player".into() } else { cleaned.into() }
+    if cleaned.is_empty() {
+        "Player".into()
+    } else {
+        cleaned.into()
+    }
 }
 
 /// Settings every PartyLink Dolphin launch uses. `-C` options apply to this
@@ -299,6 +310,9 @@ pub fn prepare_dolphin_user_dir(user_dir: &Path) -> io::Result<()> {
     }
     Ok(())
 }
+
+mod retroarch;
+pub use retroarch::*;
 
 #[cfg(test)]
 mod tests;

@@ -65,6 +65,16 @@ When everyone has the game and is ready, the host clicks **Start game**:
 
 Dolphin needs Microsoft's Visual C++ runtime; PartyLink checks for it and links the download if it's missing. An Xbox-style controller works as player 1 out of the box.
 
+### PS1, SNES, NES and Mega Drive (RetroArch)
+
+These run in [RetroArch](https://www.retroarch.com/) 1.22.2 with the PCSX ReARMed, Snes9x, FCEUmm and Genesis Plus GX cores. The "Emulator files" workflow (`.github/workflows/emulator-files.yml`) packs RetroArch and those cores from libretro's stable release into one zip and publishes it as the `retroarch-1.22.2` release here, so every player downloads the same files (about 280 MB, checked against the SHA-256 in `apps/web/src/emulators.ts`).
+
+1. The host's RetroArch opens with the game and hosts through libretro's nearest relay server (picked from the PC's time zone), so nobody opens router ports.
+2. RetroArch only shares a relay session through libretro's public lobby list, so the room is listed there with a password PartyLink makes for each game. The host's app reads the room back from the list and sends the room and password to the party.
+3. Friends' RetroArch opens their own copy of the game and joins; they drop into the game as they connect. Press F1 for RetroArch's menu.
+
+Every player gets the same core settings: PS1 games use the built-in BIOS, and with 3 or more players a multitap is plugged in so games like Crash Bash take 4 players. RetroArch's settings and saves live in PartyLink's data folder (`retroarch-user`).
+
 ## Tests
 
 ```

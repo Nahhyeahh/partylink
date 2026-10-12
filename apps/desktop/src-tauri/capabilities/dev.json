@@ -15,6 +15,8 @@
     "allow-needs-vc-runtime",
     "allow-launch-dolphin",
     "allow-emulator-running",
-    "allow-read-dolphin-room-code"
+    "allow-read-dolphin-room-code",
+    "allow-launch-retroarch",
+    "allow-find-retroarch-room"
   ]
 }
