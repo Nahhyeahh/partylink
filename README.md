@@ -6,7 +6,7 @@ Play your own console games online with friends who live in different places. Cr
 >
 > PartyLink never includes or downloads games. Each player uses their own game files.
 
-**Play in a browser:** https://partylink.adrianpaintaway.workers.dev
+**Play in a browser:** https://partylink.partylink-crew.workers.dev
 
 **Windows app:** download the latest `PartyLink_..._x64-setup.exe` from [Releases](../../releases). Windows may say "Windows protected your PC" because the installer isn't signed yet; click **More info**, then **Run anyway**.
 
