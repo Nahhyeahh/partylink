@@ -78,6 +78,15 @@ impl ScanCache {
             .unwrap_or_default()
     }
 
+    /// The cached game with this fingerprint, if any. Used to find the file
+    /// to open when the party starts a game, so the web app never handles paths.
+    pub fn find_by_sha1(&self, sha1: &str) -> Option<&GameFile> {
+        self.entries
+            .values()
+            .filter_map(|entry| entry.game.as_ref())
+            .find(|game| game.sha1 == sha1 && Path::new(&game.path).is_file())
+    }
+
     pub fn save(&self, path: &Path) -> io::Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;

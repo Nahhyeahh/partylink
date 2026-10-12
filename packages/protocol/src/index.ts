@@ -95,6 +95,17 @@ export const GAME_COPY_STATES = ["checking", "match", "missing", "no-app"] as co
 export const gameCopySchema = z.enum(GAME_COPY_STATES);
 export type GameCopy = z.infer<typeof gameCopySchema>;
 
+/** An emulator netplay room code, such as Dolphin's 8-character traversal code. */
+const roomCode = z.string().regex(/^[A-Za-z0-9]{4,32}$/);
+
+/** A started own game. The host's emulator hosts it; everyone else joins with the room code. */
+export const playSessionSchema = z.object({
+  /** null until the host's emulator has a room code. */
+  roomCode: z.string().nullable(),
+  startedAt: z.number(),
+});
+export type PlaySession = z.infer<typeof playSessionSchema>;
+
 // Client -> server
 
 export const clientMessageSchema = z.discriminatedUnion("type", [
@@ -110,6 +121,12 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("selectOwnGame"), game: ownGameSchema.nullable() }).strict(),
   // Each player's answer to "do you have this game?" for the selected own game.
   z.object({ type: z.literal("setGameCopy"), sha1, copy: z.enum(["match", "missing", "no-app"]) }).strict(),
+  // Host only. Starts the selected own game once everyone has it and is ready.
+  z.object({ type: z.literal("startOwnGame") }).strict(),
+  // Host only. The emulator's netplay room code, which friends' apps join automatically.
+  z.object({ type: z.literal("setRoomCode"), code: roomCode }).strict(),
+  // Host only. Everyone goes back to the lobby.
+  z.object({ type: z.literal("endOwnGame") }).strict(),
 ]);
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
 
@@ -133,6 +150,8 @@ export const lobbyStateSchema = z.object({
   selectedGameId: z.string().nullable(),
   /** A game from the host's folder. At most one of this and selectedGameId is set. */
   selectedOwnGame: ownGameSchema.nullable(),
+  /** Set while the selected own game is being played. */
+  session: playSessionSchema.nullable(),
   players: z.array(lobbyPlayerSchema),
 });
 export type LobbyState = z.infer<typeof lobbyStateSchema>;
@@ -149,6 +168,7 @@ export const errorCodeSchema = z.enum([
   "not_host",
   "unknown_game",
   "color_taken",
+  "cannot_start",
 ]);
 export type ErrorCode = z.infer<typeof errorCodeSchema>;
 

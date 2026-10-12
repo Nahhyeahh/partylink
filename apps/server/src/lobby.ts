@@ -1,7 +1,7 @@
 // Who is in a room: seats, host, tokens and connection status.
 // Plain data and functions with no Cloudflare dependencies, so it can be unit tested
 // and stored as-is in Durable Object storage.
-import { getGame } from "@partylink/game-catalog";
+import { canStartOwnGame, getGame } from "@partylink/game-catalog";
 import {
   AVATAR_COLORS,
   type AvatarColor,
@@ -11,6 +11,7 @@ import {
   type LobbyState,
   MAX_PLAYERS,
   type OwnGame,
+  type PlaySession,
   SEAT_HOLD_MS,
 } from "@partylink/protocol";
 
@@ -35,6 +36,8 @@ export interface LobbyData {
   selectedGameId: string | null;
   /** A game from the host's folder. At most one of this and selectedGameId is set. */
   selectedOwnGame: OwnGame | null;
+  /** Set while the selected own game is being played. */
+  session: PlaySession | null;
   seats: Seat[];
   /** When the last connected player left; null while anyone is connected. */
   emptySince: number | null;
@@ -45,13 +48,14 @@ export type JoinResult = { ok: true; seat: Seat } | Failure;
 export type ActionResult = { ok: true } | Failure;
 
 export function createLobby(code: string, now: number): LobbyData {
-  return { code, createdAt: now, hostId: null, selectedGameId: null, selectedOwnGame: null, seats: [], emptySince: now };
+  return { code, createdAt: now, hostId: null, selectedGameId: null, selectedOwnGame: null, session: null, seats: [], emptySince: now };
 }
 
 /** Fills in fields added after a lobby was stored, so rooms survive a deploy. */
 export function upgradeLobby(stored: LobbyData): LobbyData {
   stored.selectedGameId ??= null;
   stored.selectedOwnGame ??= null;
+  stored.session ??= null;
   for (const seat of stored.seats) {
     seat.ready ??= false;
     seat.gameCopy ??= "checking";
@@ -121,7 +125,11 @@ export function markDisconnected(lobby: LobbyData, playerId: string, now: number
 
 export function leave(lobby: LobbyData, playerId: string, now: number): void {
   lobby.seats = lobby.seats.filter((s) => s.id !== playerId);
-  if (lobby.hostId === playerId) lobby.hostId = pickNewHost(lobby);
+  if (lobby.hostId === playerId) {
+    lobby.hostId = pickNewHost(lobby);
+    // The game ran in the old host's emulator, so it ends with them.
+    lobby.session = null;
+  }
   if (lobby.seats.every((s) => !s.connected)) lobby.emptySince ??= now;
 }
 
@@ -175,8 +183,38 @@ export function setGameCopy(lobby: LobbyData, playerId: string, sha1: string, co
   return { ok: true };
 }
 
+/** Host only. Starts the selected own game if everyone has it and is ready. */
+export function startOwnGame(lobby: LobbyData, playerId: string, now: number): ActionResult {
+  if (lobby.hostId !== playerId) return { ok: false, code: "not_host", message: "Only the host can start the game." };
+  const game = lobby.selectedOwnGame;
+  if (!game) return { ok: false, code: "cannot_start", message: "Pick one of your games first." };
+  if (lobby.session) return { ok: true };
+  const check = canStartOwnGame(game, lobby.seats);
+  if (!check.ok) return { ok: false, code: "cannot_start", message: check.reason };
+  lobby.session = { roomCode: null, startedAt: now };
+  return { ok: true };
+}
+
+/** Host only. Shares the emulator's room code so everyone else's app can join. */
+export function setRoomCode(lobby: LobbyData, playerId: string, code: string): ActionResult {
+  if (lobby.hostId !== playerId) return { ok: false, code: "not_host", message: "Only the host shares the room code." };
+  if (!lobby.session) return { ok: false, code: "cannot_start", message: "The game hasn't started." };
+  lobby.session.roomCode = code;
+  return { ok: true };
+}
+
+/** Host only. Ends the game and brings everyone back to the lobby, ready to pick again. */
+export function endOwnGame(lobby: LobbyData, playerId: string): ActionResult {
+  if (lobby.hostId !== playerId) return { ok: false, code: "not_host", message: "Only the host can end the game." };
+  if (!lobby.session) return { ok: true };
+  lobby.session = null;
+  for (const seat of lobby.seats) seat.ready = false;
+  return { ok: true };
+}
+
 /** A new game means everyone agrees again and checks their folder again. */
 function resetChoices(lobby: LobbyData): void {
+  lobby.session = null;
   for (const seat of lobby.seats) {
     seat.ready = false;
     seat.gameCopy = "checking";
@@ -209,6 +247,7 @@ export function toLobbyState(lobby: LobbyData): LobbyState {
     maxPlayers: MAX_PLAYERS,
     selectedGameId: lobby.selectedGameId,
     selectedOwnGame: lobby.selectedOwnGame,
+    session: lobby.session,
     players: lobby.seats.map((s) => ({
       id: s.id,
       name: s.name,

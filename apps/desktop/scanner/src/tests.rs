@@ -256,3 +256,17 @@ fn serializes_with_web_friendly_names() {
     assert_eq!(json["discId"], "GMPE01");
     assert!(json.get("discTitle").is_none());
 }
+
+#[test]
+fn finds_cached_games_by_fingerprint() {
+    let dir = TempDir::new().unwrap();
+    let path = write(dir.path(), "game.gba", b"abc");
+    let mut cache = ScanCache::default();
+    scan(dir.path(), &mut cache, |_| {}).unwrap();
+    assert_eq!(cache.find_by_sha1(ABC_SHA1).map(|g| g.path.clone()), Some(path.to_string_lossy().into_owned()));
+    assert!(cache.find_by_sha1("0000").is_none());
+
+    // A file deleted since the last scan isn't offered.
+    std::fs::remove_file(&path).unwrap();
+    assert!(cache.find_by_sha1(ABC_SHA1).is_none());
+}

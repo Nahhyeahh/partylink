@@ -25,8 +25,9 @@ jobs:
       - run: pnpm --filter @partylink/e2e exec playwright install --with-deps chromium
       - run: pnpm test:e2e
 
-  # The desktop app's game folder scanner. It has no Tauri dependency, so it
-  # runs here; the full desktop app is built on Windows in desktop.yml.
+  # The desktop app's game folder scanner and emulator installer. They have no
+  # Tauri dependency, so they run here; the full desktop app is built on
+  # Windows in desktop.yml.
   scanner:
     runs-on: ubuntu-latest
     steps:
@@ -36,6 +37,10 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: apps/desktop/scanner
+          workspaces: |
+            apps/desktop/scanner
+            apps/desktop/emulators
       - run: cargo test --manifest-path apps/desktop/scanner/Cargo.toml
       - run: cargo clippy --manifest-path apps/desktop/scanner/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --manifest-path apps/desktop/emulators/Cargo.toml
+      - run: cargo clippy --manifest-path apps/desktop/emulators/Cargo.toml --all-targets -- -D warnings

@@ -277,4 +277,37 @@ describe("rooms over real WebSockets", () => {
     ada.close();
     bo.close();
   });
+
+  it("starts an own game and shares the host's room code", async () => {
+    const code = await createRoom();
+    const ada = new Client(code);
+    await ada.send({ type: "join", name: "Ada" });
+    await ada.waitFor(isWelcome);
+    const bo = new Client(code);
+    await bo.send({ type: "join", name: "Bo" });
+    await bo.waitFor(isWelcome);
+
+    const sha1 = "f4b287e3d1a9b05ea6cb5e573414f768370e1ed8";
+    await ada.send({ type: "selectOwnGame", game: { system: "gc", sha1, title: "Mario Party 4 (USA) (Rev 1)" } });
+    await ada.send({ type: "startOwnGame" });
+    await ada.waitFor((m) => m.type === "error" && m.code === "cannot_start");
+
+    for (const c of [ada, bo]) {
+      await c.send({ type: "setGameCopy", sha1, copy: "match" });
+      await c.send({ type: "setReady", ready: true });
+    }
+    await ada.waitFor((m) => m.type === "lobby" && m.lobby.players.every((p) => p.ready && p.gameCopy === "match"));
+    await ada.send({ type: "startOwnGame" });
+    await bo.waitFor((m) => m.type === "lobby" && m.lobby.session !== null && m.lobby.session.roomCode === null);
+
+    await bo.send({ type: "setRoomCode", code: "a1B2c3D4" });
+    await bo.waitFor((m) => m.type === "error" && m.code === "not_host");
+    await ada.send({ type: "setRoomCode", code: "a1B2c3D4" });
+    await bo.waitFor((m) => m.type === "lobby" && m.lobby.session?.roomCode === "a1B2c3D4");
+
+    await ada.send({ type: "endOwnGame" });
+    await bo.waitFor((m) => m.type === "lobby" && m.lobby.session === null);
+    ada.close();
+    bo.close();
+  });
 });

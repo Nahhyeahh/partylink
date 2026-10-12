@@ -36,9 +36,17 @@ fn save_settings(app: &AppHandle, settings: &Settings) -> Result<(), String> {
     std::fs::write(path, json).map_err(|e| e.to_string())
 }
 
+pub fn games_folder(app: &AppHandle) -> Option<String> {
+    load_settings(app).games_folder
+}
+
+pub fn scan_cache_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().app_cache_dir().map_err(|e| e.to_string())?.join("scan-cache.json"))
+}
+
 #[tauri::command]
 pub fn get_games_folder(app: AppHandle) -> Option<String> {
-    load_settings(&app).games_folder
+    games_folder(&app)
 }
 
 /// Opens the system folder picker and remembers the choice.
@@ -64,7 +72,7 @@ pub async fn choose_games_folder(app: AppHandle) -> Result<Option<String>, Strin
 #[tauri::command]
 pub async fn scan_games(app: AppHandle) -> Result<ScanResult, String> {
     let folder = load_settings(&app).games_folder.ok_or("Choose your games folder first.")?;
-    let cache_path = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("scan-cache.json");
+    let cache_path = scan_cache_path(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         let mut cache = ScanCache::load(&cache_path);
         let mut last_event = Instant::now() - Duration::from_secs(1);

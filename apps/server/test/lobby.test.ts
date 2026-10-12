@@ -14,6 +14,9 @@ import {
   selectOwnGame,
   setColor,
   setGameCopy,
+  setRoomCode,
+  startOwnGame,
+  endOwnGame,
   setReady,
   toLobbyState,
   upgradeLobby,
@@ -250,5 +253,64 @@ describe("own games", () => {
     const upgraded = upgradeLobby(stored);
     expect(upgraded.selectedOwnGame).toBeNull();
     expect(upgraded.seats[0]!.gameCopy).toBe("checking");
+  });
+});
+
+describe("playing an own game", () => {
+  const mp4 = { system: "gc" as const, sha1: "f4b287e3d1a9b05ea6cb5e573414f768370e1ed8", title: "Mario Party 4 (USA) (Rev 1)" };
+
+  function readyLobby() {
+    const lobby = lobbyWith("Ada", "Bo");
+    const [host, guest] = [lobby.seats[0]!.id, lobby.seats[1]!.id];
+    selectOwnGame(lobby, host, mp4);
+    for (const id of [host, guest]) {
+      setGameCopy(lobby, id, mp4.sha1, "match");
+      setReady(lobby, id, true);
+    }
+    return { lobby, host, guest };
+  }
+
+  it("starts only when the start check passes", () => {
+    const { lobby, host, guest } = readyLobby();
+    setReady(lobby, guest, false);
+    expect(startOwnGame(lobby, host, 1)).toMatchObject({ ok: false, code: "cannot_start", message: "Waiting for everyone to be ready." });
+    setReady(lobby, guest, true);
+    expect(startOwnGame(lobby, guest, 1)).toMatchObject({ ok: false, code: "not_host" });
+    expect(startOwnGame(lobby, host, 1)).toEqual({ ok: true });
+    expect(toLobbyState(lobby).session).toEqual({ roomCode: null, startedAt: 1 });
+  });
+
+  it("refuses to start without an own game", () => {
+    const lobby = lobbyWith("Ada");
+    expect(startOwnGame(lobby, lobby.seats[0]!.id, 1)).toMatchObject({ ok: false, code: "cannot_start" });
+  });
+
+  it("shares the host's room code, then ends back in the lobby", () => {
+    const { lobby, host, guest } = readyLobby();
+    expect(setRoomCode(lobby, host, "a1B2c3D4")).toMatchObject({ ok: false, code: "cannot_start" });
+    startOwnGame(lobby, host, 1);
+    expect(setRoomCode(lobby, guest, "a1B2c3D4")).toMatchObject({ ok: false, code: "not_host" });
+    expect(setRoomCode(lobby, host, "a1B2c3D4")).toEqual({ ok: true });
+    expect(lobby.session?.roomCode).toBe("a1B2c3D4");
+
+    expect(endOwnGame(lobby, guest)).toMatchObject({ ok: false, code: "not_host" });
+    expect(endOwnGame(lobby, host)).toEqual({ ok: true });
+    expect(lobby.session).toBeNull();
+    expect(lobby.seats.map((s) => s.ready)).toEqual([false, false]);
+    expect(lobby.selectedOwnGame).toEqual(mp4);
+  });
+
+  it("ends the game when the host leaves or picks another game", () => {
+    const first = readyLobby();
+    startOwnGame(first.lobby, first.host, 1);
+    selectGame(first.lobby, first.host, "trivia-blitz");
+    expect(first.lobby.session).toBeNull();
+
+    const second = readyLobby();
+    startOwnGame(second.lobby, second.host, 1);
+    leave(second.lobby, second.guest, 2);
+    expect(second.lobby.session).not.toBeNull();
+    leave(second.lobby, second.host, 3);
+    expect(second.lobby.session).toBeNull();
   });
 });
