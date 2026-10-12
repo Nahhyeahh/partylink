@@ -12,7 +12,11 @@ export type EmulatorSetup =
   | { status: "error"; message: string };
 
 export function errorText(error: unknown): string {
-  return typeof error === "string" ? error : error instanceof Error ? error.message : "Something went wrong.";
+  const text = typeof error === "string" ? error : error instanceof Error ? error.message : "Something went wrong.";
+  // An older app doesn't have the command this game needs.
+  if (/command \S+ (not found|not allowed)/i.test(text))
+    return "This game needs a newer PartyLink. Download the latest version from the Releases page and install it.";
+  return text;
 }
 
 // One install per release, even if several screens ask at once.
