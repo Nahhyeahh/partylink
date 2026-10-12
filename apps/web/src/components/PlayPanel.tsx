@@ -72,7 +72,9 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
   const [launchError, setLaunchError] = useState<string | null>(null);
   const launched = useRef<string | null>(null);
   const retro = release.emulator === "retroarch";
-  // A room code already on the clipboard before Dolphin opened (or already in
+  const mupen = release.emulator === "mupen-mpn";
+  const readCode = mupen ? desktop.readMupenRoomCode : desktop.readDolphinRoomCode;
+  // A room code already on the clipboard before the emulator opened (or already in
   // RetroArch's lobby list) belongs to an older game, so the host's app ignores it.
   const staleCode = useRef<string | null>(null);
   // The host's RetroArch room password, made once per game.
@@ -97,8 +99,13 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
           } else {
             await desktop.launchRetroArch(release, { mode, sha1: game.sha1, code: code ?? "" }, nickname, players);
           }
+        } else if (mupen) {
+          // Mupen's netplay is only in its window, so friends paste the code there.
+          if (mode === "host") staleCode.current = await readCode().catch(() => null);
+          await desktop.launchMupen(release, nickname);
+          if (mode === "join" && code) await desktop.copyMupenRoomCode(code);
         } else {
-          if (mode === "host") staleCode.current = await desktop.readDolphinRoomCode().catch(() => null);
+          if (mode === "host") staleCode.current = await readCode().catch(() => null);
           await desktop.launchDolphin(
             release,
             mode === "host" ? { mode, sha1: game.sha1 } : { mode, code: code ?? "" },
@@ -111,7 +118,7 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
         setLaunchError(errorText(error));
       }
     },
-    [release, retro, nickname, players, game.sha1, session.startedAt],
+    [release, retro, mupen, readCode, nickname, players, game.sha1, session.startedAt],
   );
 
   useEffect(() => {
@@ -139,8 +146,9 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
   }, [setup.status, isHost, joinCode, session.startedAt, launch]);
 
   // Pick up the host's room code and share it. Dolphin: the host clicks Copy
-  // and it lands on the clipboard. RetroArch: its room appears in libretro's
-  // lobby list a few seconds after it opens.
+  // and it lands on the clipboard. Mupen: the app reads it from what Mupen
+  // prints (or the clipboard). RetroArch: its room appears in libretro's lobby
+  // list a few seconds after it opens.
   const sharedCode = session.roomCode;
   useEffect(() => {
     if (!isHost || windowState !== "open") return;
@@ -156,14 +164,14 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
             onRoomCode(code);
           }
         } else {
-          const code = await desktop.readDolphinRoomCode().catch(() => null);
+          const code = await readCode().catch(() => null);
           if (code && code !== staleCode.current && code !== sharedCode) onRoomCode(code);
         }
       },
       retro ? 4000 : 1000,
     );
     return () => clearInterval(timer);
-  }, [isHost, retro, windowState, sharedCode, nickname, onRoomCode]);
+  }, [isHost, retro, readCode, windowState, sharedCode, nickname, onRoomCode]);
 
   if (setup.status !== "ready") return <SetupMessage setup={setup} release={release} onRetry={retry} />;
 
@@ -180,7 +188,24 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
               : `Your friends' ${release.name} is joining. They drop into the game as they connect.`}
         </p>
       ) : isHost ? (
-        <HostSteps release={release} code={session.roomCode} windowState={windowState} onRoomCode={onRoomCode} />
+        <HostSteps
+          release={release}
+          gameTitle={game.title}
+          code={session.roomCode}
+          windowState={windowState}
+          onRoomCode={onRoomCode}
+        />
+      ) : mupen && session.roomCode && windowState === "open" ? (
+        <>
+          <p>
+            {release.name} is open and {hostName}'s room code <code>{session.roomCode}</code> is copied. In{" "}
+            {release.name}, click <strong>Online Play</strong>, then <strong>Join</strong>. Paste the code into Direct
+            connect (Ctrl+V) and join. {hostName} starts the game from there.
+          </p>
+          <button className="link" onClick={() => void desktop.copyMupenRoomCode(session.roomCode ?? "").catch(() => {})}>
+            Copy the code again
+          </button>
+        </>
       ) : (
         <p>
           {!session.roomCode
@@ -199,7 +224,12 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
       )}
 
       <p className="muted small">
-        {retro ? (
+        {mupen ? (
+          <>
+            Plug in an Xbox-style controller before {release.name} opens. To change buttons, use the input settings in{" "}
+            {release.name}'s Settings.
+          </>
+        ) : retro ? (
           <>
             Plug in an Xbox-style controller before {release.name} opens. Press F1 for {release.name}'s menu, where
             you can change buttons or quit.
@@ -219,20 +249,23 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
 
 function HostSteps({
   release,
+  gameTitle,
   code,
   windowState,
   onRoomCode,
 }: {
   release: EmulatorRelease;
+  gameTitle: string;
   code: string | null;
   windowState: Window;
   onRoomCode: (code: string) => void;
 }) {
   const [typed, setTyped] = useState("");
+  const mupen = release.emulator === "mupen-mpn";
   const submit = (e: FormEvent) => {
     e.preventDefault();
     const value = typed.trim();
-    if (/^[A-Za-z0-9]{8}$/.test(value)) {
+    if (mupen ? /^[0-9A-Fa-f]{7}$/.test(value) : /^[A-Za-z0-9]{8}$/.test(value)) {
       onRoomCode(value);
       setTyped("");
     }
@@ -243,10 +276,18 @@ function HostSteps({
   return (
     <>
       <ol className="steps">
-        <li className={code ? "done" : ""}>
-          In {release.name}'s NetPlay window, click <strong>Copy</strong> next to the room code. PartyLink sends it to
-          your friends{code ? <> (sent: <code>{code}</code>)</> : null}.
-        </li>
+        {mupen ? (
+          <li className={code ? "done" : ""}>
+            In {release.name}, click <strong>Online Play</strong>, then <strong>Host</strong>. Pick {gameTitle} and
+            create the session. PartyLink sends the room code to your friends
+            {code ? <> (sent: <code>{code}</code>)</> : null}.
+          </li>
+        ) : (
+          <li className={code ? "done" : ""}>
+            In {release.name}'s NetPlay window, click <strong>Copy</strong> next to the room code. PartyLink sends it
+            to your friends{code ? <> (sent: <code>{code}</code>)</> : null}.
+          </li>
+        )}
         <li>
           When everyone appears in {release.name}'s player list, click <strong>Start</strong> there.
         </li>

@@ -22,6 +22,9 @@
     "allow-emulator-running",
     "allow-read-dolphin-room-code",
     "allow-launch-retroarch",
-    "allow-find-retroarch-room"
+    "allow-find-retroarch-room",
+    "allow-launch-mupen",
+    "allow-read-mupen-room-code",
+    "allow-copy-mupen-room-code"
   ]
 }

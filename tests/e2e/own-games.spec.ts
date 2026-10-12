@@ -22,6 +22,14 @@ const CRASH_BASH: FakeGame = {
   sha1: "fce2d66a12d49ec50aa1b93e138da6c6f646eb16",
 };
 
+const POKEMON_EMERALD: FakeGame = {
+  path: "C:\\Games\\GBA\\Pokemon Emerald (USA).gba",
+  fileName: "Pokemon Emerald (USA).gba",
+  system: "gba",
+  size: 16777216,
+  sha1: "2222222222222222222222222222222222222222",
+};
+
 const MARIO_PARTY_2: FakeGame = {
   path: "C:\\Games\\N64\\Mario Party 2 (USA).z64",
   fileName: "Mario Party 2 (USA).z64",
@@ -51,10 +59,12 @@ async function fakeDesktop(page: Page, folder: string | null, games: FakeGame[],
       let clipboard: string | null = "OLDCODE1";
       // RetroArch's lobby list: a room from an earlier game until the host's opens.
       let retroRoom: string | null = "relay.example.org|55435|OldSession==";
+      let mupenCode: string | null = null;
       const listeners: Record<string, number[]> = {};
       const w = window as unknown as Record<string, unknown>;
       const calls: { cmd: string; args: unknown }[] = [];
       w.__calls = calls;
+      w.__clipboard = () => clipboard;
       const emit = (event: string, payload: unknown) => {
         for (const id of listeners[event] ?? []) {
           (w[`_${id}`] as (e: unknown) => void)?.({ event, id, payload });
@@ -104,6 +114,15 @@ async function fakeDesktop(page: Page, folder: string | null, games: FakeGame[],
               return null;
             case "find_retroarch_room":
               return retroRoom;
+            case "launch_mupen":
+              // The host makes a room in Mupen's window; Mupen prints its code.
+              setTimeout(() => (mupenCode = "0A1B2C3"), 500);
+              return null;
+            case "read_mupen_room_code":
+              return mupenCode;
+            case "copy_mupen_room_code":
+              clipboard = args.code as string;
+              return null;
             default:
               throw new Error(`unexpected command ${cmd}`);
           }
@@ -210,7 +229,7 @@ test("starting a GameCube game opens Dolphin for everyone", async ({ browser }) 
   const MP4_ISO: FakeGame = { ...MARIO_PARTY_4, sha1: "f4b287e3d1a9b05ea6cb5e573414f768370e1ed8", path: "C:\\Games\\mp4.iso" };
   const host = await newPlayer(browser);
   const friend = await newPlayer(browser);
-  await fakeDesktop(host, "C:\\Games", [MP4_ISO, MARIO_PARTY_2]);
+  await fakeDesktop(host, "C:\\Games", [MP4_ISO, POKEMON_EMERALD]);
   await fakeDesktop(friend, "D:\\Roms", [MP4_ISO]);
 
   await host.goto("/");
@@ -222,10 +241,10 @@ test("starting a GameCube game opens Dolphin for everyone", async ({ browser }) 
   await friend.getByRole("button", { name: "Join", exact: true }).click();
   await expect(playerRow(host, "Sam")).toBeVisible();
 
-  // N64 games can be picked but not started yet.
+  // GBA games can be picked but not started.
   await host.getByRole("button", { name: "Choose" }).click();
-  await host.locator(".game-picker").getByRole("button", { name: /Mario Party 2/ }).click();
-  await expect(host.getByText("Starting Nintendo 64 games arrives in a later update.")).toBeVisible();
+  await host.locator(".game-picker").getByRole("button", { name: /Pokemon Emerald/ }).click();
+  await expect(host.getByText("Starting Game Boy Advance games arrives in a later update.")).toBeVisible();
 
   await host.getByRole("button", { name: "Change" }).click();
   await host.locator(".game-picker").getByRole("button", { name: /Mario Party 4/ }).click();
@@ -284,4 +303,34 @@ test("starting a PS1 game opens RetroArch for everyone", async ({ browser }) => 
       players: 2,
     },
   ]);
+});
+
+test("starting an N64 game opens Mupen and hands friends the room code", async ({ browser }) => {
+  const host = await newPlayer(browser);
+  const friend = await newPlayer(browser);
+  await fakeDesktop(host, "C:\\Games", [MARIO_PARTY_2]);
+  await fakeDesktop(friend, "D:\\Roms", [MARIO_PARTY_2]);
+
+  await host.goto("/");
+  await host.getByLabel("Your name").fill("Adrian");
+  await host.getByRole("button", { name: "Create a party" }).click();
+  const code = (await host.locator(".room-code").textContent())?.trim() ?? "";
+  await friend.goto(`/?room=${code}`);
+  await friend.getByLabel("Your name").fill("Sam");
+  await friend.getByRole("button", { name: "Join", exact: true }).click();
+
+  await host.getByRole("button", { name: "Choose" }).click();
+  await host.locator(".game-picker").getByRole("button", { name: /Mario Party 2/ }).click();
+  await expect(playerRow(host, "Sam")).toContainText("Has the game");
+  await host.getByRole("button", { name: "I'm ready" }).click();
+  await friend.getByRole("button", { name: "I'm ready" }).click();
+  await host.getByRole("button", { name: "Start game" }).click();
+
+  // The host's Mupen prints the room code; the friend's app opens Mupen and copies it.
+  await expect(host.locator(".steps")).toContainText("Online Play");
+  await expect(host.locator(".steps")).toContainText("sent: 0A1B2C3");
+  await expect(friend.getByText("Paste the code into Direct connect", { exact: false })).toBeVisible();
+  expect(await friend.evaluate(() => (window as unknown as { __clipboard: () => string }).__clipboard())).toBe("0A1B2C3");
+  expect(await launches(host, "launch_mupen")).toEqual([{ nickname: "Adrian" }]);
+  expect(await launches(friend, "launch_mupen")).toEqual([{ nickname: "Sam" }]);
 });

@@ -13,6 +13,9 @@ fn main() {
         "read_dolphin_room_code",
         "launch_retroarch",
         "find_retroarch_room",
+        "launch_mupen",
+        "read_mupen_room_code",
+        "copy_mupen_room_code",
     ])))
     .expect("failed to run tauri-build");
 }

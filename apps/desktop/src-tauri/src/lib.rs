@@ -28,6 +28,9 @@ pub fn run() {
             emulators::read_dolphin_room_code,
             emulators::launch_retroarch,
             emulators::find_retroarch_room,
+            emulators::launch_mupen,
+            emulators::read_mupen_room_code,
+            emulators::copy_mupen_room_code,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PartyLink");

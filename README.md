@@ -65,6 +65,16 @@ When everyone has the game and is ready, the host clicks **Start game**:
 
 Dolphin needs Microsoft's Visual C++ runtime; PartyLink checks for it and links the download if it's missing. An Xbox-style controller works as player 1 out of the box.
 
+### N64 (Mupen-MPN)
+
+N64 games run in [Mupen-MPN](https://github.com/MarioPartyNetplay/Mupen-MPN), the Mario Party Netplay build of Mupen64Plus (about 100 MB). RetroArch can't play N64 games online. Mupen-MPN's netplay is only in its own window, so:
+
+1. PartyLink opens Mupen with the player's nickname and games folder filled in, its update check off, and sessions hidden from its public list.
+2. The host clicks **Online Play**, then **Host**, and picks the game. PartyLink reads the room code Mupen prints (or one copied with its **Copy** button) and sends it to the party.
+3. Each friend's Mupen opens with the code already copied. They click **Online Play**, then **Join**, paste it into Direct connect and join. The host clicks **Start**.
+
+Mupen's settings and saves live in PartyLink's data folder (`mupen-user`).
+
 ### PS1, SNES, NES and Mega Drive (RetroArch)
 
 These run in [RetroArch](https://www.retroarch.com/) 1.22.2 with the PCSX ReARMed, Snes9x, FCEUmm and Genesis Plus GX cores. The "Emulator files" workflow (`.github/workflows/emulator-files.yml`) packs RetroArch and those cores from libretro's stable release into one zip and publishes it as the `retroarch-1.22.2` release here, so every player downloads the same files (about 280 MB, checked against the SHA-256 in `apps/web/src/emulators.ts`).

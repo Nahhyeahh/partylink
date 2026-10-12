@@ -78,4 +78,8 @@ export const desktop = {
     invoke<void>("launch_retroarch", { release: releaseArg(release), launch, nickname, players }),
   /** The host's relay room as `relay|port|session`, once RetroArch has announced it. */
   findRetroArchRoom: (nickname: string) => invoke<string | null>("find_retroarch_room", { nickname }),
+  launchMupen: (release: ReleaseArg, nickname: string) =>
+    invoke<void>("launch_mupen", { release: releaseArg(release), nickname }),
+  readMupenRoomCode: () => invoke<string | null>("read_mupen_room_code"),
+  copyMupenRoomCode: (code: string) => invoke<void>("copy_mupen_room_code", { code }),
 };
