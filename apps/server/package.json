@@ -1,0 +1,23 @@
+{
+  "name": "@partylink/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/ensure-assets-dir.mjs && wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc -p . && tsc -p tsconfig.test.json",
+    "test": "vitest run test/lobby.test.ts",
+    "test:integration": "node scripts/ensure-assets-dir.mjs && vitest run test/integration.test.ts"
+  },
+  "dependencies": {
+    "@partylink/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261012.1",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3",
+    "wrangler": "^4.149.0"
+  }
+}

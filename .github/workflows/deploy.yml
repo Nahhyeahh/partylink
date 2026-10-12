@@ -1,0 +1,41 @@
+name: Deploy
+
+# Publishes the server and web app to Cloudflare after every merge to main.
+# Needs two repository secrets: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.
+# Until they are added, this workflow skips the deploy instead of failing.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency: deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Check for Cloudflare secrets
+        id: secrets
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "Cloudflare secrets are not set yet; skipping deploy."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.secrets.outputs.ready == 'true'
+        uses: actions/checkout@v4
+      - if: steps.secrets.outputs.ready == 'true'
+        uses: pnpm/action-setup@v4
+      - if: steps.secrets.outputs.ready == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - if: steps.secrets.outputs.ready == 'true'
+        run: pnpm install --frozen-lockfile && pnpm build
+      - if: steps.secrets.outputs.ready == 'true'
+        run: pnpm --filter @partylink/server run deploy

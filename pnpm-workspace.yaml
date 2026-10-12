@@ -1,0 +1,8 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Packages allowed to run install scripts (they download platform binaries).
+onlyBuiltDependencies:
+  - esbuild
+  - workerd
