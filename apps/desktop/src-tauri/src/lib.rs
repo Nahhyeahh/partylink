@@ -3,12 +3,21 @@
 // app means friends get interface updates without reinstalling, and the app
 // talks to the same server as phones and browsers.
 //
-// Native features, such as launching installed games, will be added here as
-// Tauri commands in later milestones.
+// Things a web page can't do, like reading the player's games folder, are
+// Tauri commands the web app calls when it runs inside this window. Which
+// pages may call them is set in capabilities/.
+
+mod games;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            games::get_games_folder,
+            games::choose_games_folder,
+            games::scan_games,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running PartyLink");
 }

@@ -251,4 +251,30 @@ describe("rooms over real WebSockets", () => {
     ada.close();
     bo.close();
   });
+
+  it("checks everyone has the host's own game", async () => {
+    const code = await createRoom();
+    const ada = new Client(code);
+    await ada.send({ type: "join", name: "Ada" });
+    await ada.waitFor(isWelcome);
+    const bo = new Client(code);
+    await bo.send({ type: "join", name: "Bo" });
+    await bo.waitFor(isWelcome);
+
+    const sha1 = "fce2d66a12d49ec50aa1b93e138da6c6f646eb16";
+    await ada.send({ type: "selectOwnGame", game: { system: "ps1", sha1, title: "Crash Bash (USA)" } });
+    await bo.waitFor((m) => m.type === "lobby" && m.lobby.selectedOwnGame?.title === "Crash Bash (USA)");
+
+    await ada.send({ type: "setGameCopy", sha1, copy: "match" });
+    await bo.send({ type: "setGameCopy", sha1, copy: "missing" });
+    await ada.waitFor(
+      (m) => m.type === "lobby" && m.lobby.players.map((p) => p.gameCopy).join() === "match,missing",
+    );
+
+    // Paths or other extra fields are refused, so nothing private leaves a player's PC.
+    await ada.send({ type: "selectOwnGame", game: { system: "ps1", sha1, title: "x", path: "C:/Games" } });
+    await ada.waitFor((m) => m.type === "error" && m.code === "bad_message");
+    ada.close();
+    bo.close();
+  });
 });

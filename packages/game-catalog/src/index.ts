@@ -136,3 +136,41 @@ export function canStart(game: GameInfo | undefined, players: { connected: boole
   if (present.some((p) => !p.ready)) return { ok: false, reason: "Waiting for everyone to be ready." };
   return { ok: true };
 }
+
+// Players' own games ----------------------------------------------------------
+
+/** Emulator netplay works best with up to four players, like the consoles themselves. */
+export const OWN_GAME_MAX_PLAYERS = 4;
+
+type CopyState = "checking" | "match" | "missing" | "no-app";
+
+function listNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/** Whether a lobby could start a game from the host's folder now. Shared by the lobby screen and the server. */
+export function canStartOwnGame(
+  game: { title: string },
+  players: { name: string; connected: boolean; ready: boolean; gameCopy: CopyState }[],
+): StartCheck {
+  const present = players.filter((p) => p.connected);
+  if (present.length > OWN_GAME_MAX_PLAYERS) {
+    return { ok: false, reason: `Console games allow at most ${OWN_GAME_MAX_PLAYERS} players.` };
+  }
+  const names = (copy: CopyState) => present.filter((p) => p.gameCopy === copy).map((p) => p.name);
+  const noApp = names("no-app");
+  if (noApp.length > 0) {
+    return { ok: false, reason: `${listNames(noApp)} ${noApp.length === 1 ? "needs" : "need"} the PartyLink app to play ${game.title}.` };
+  }
+  const missing = names("missing");
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      reason: `${listNames(missing)} ${missing.length === 1 ? "doesn't" : "don't"} have the same copy of ${game.title}.`,
+    };
+  }
+  if (names("checking").length > 0) return { ok: false, reason: "Checking everyone has the game…" };
+  if (present.some((p) => !p.ready)) return { ok: false, reason: "Waiting for everyone to be ready." };
+  return { ok: true };
+}

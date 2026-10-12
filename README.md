@@ -1,8 +1,10 @@
 # PartyLink
 
-Party games for friends who live in different places. Create a party, share the 4-letter code, and play together from your PCs or phones.
+Play your own console games online with friends who live in different places. Create a party, share the 4-letter code, pick a game from your games folder, and play together through emulator netplay.
 
-> **Status:** early development. You can create a party, have friends join by code or invite link, pick avatar colours, mark yourselves ready, and the host can choose a game. The games themselves come next, starting with Trivia Blitz.
+> **Status:** early development. You can create a party, have friends join by code or invite link, and pick avatar colours. In the Windows app you choose your games folder, PartyLink recognises your GameCube, Wii, N64, PlayStation, SNES, NES, Game Boy Advance and Mega Drive games, and the lobby checks that everyone has the same copy of the host's chosen game. Starting the game through the emulators comes next, beginning with GameCube and Wii.
+>
+> PartyLink never includes or downloads games. Each player uses their own game files.
 
 **Play in a browser:** https://partylink.adrianpaintaway.workers.dev
 
@@ -13,7 +15,9 @@ Party games for friends who live in different places. Create a party, share the 
 | Part | Folder | What it is |
 | --- | --- | --- |
 | Web app | `apps/web` | React + TypeScript. The home screen, game library, lobby, and (later) games and phone controllers. |
-| Desktop app | `apps/desktop` | A Tauri 2 window around the hosted web app, built into a Windows installer by GitHub Actions. |
+| Desktop app | `apps/desktop/src-tauri` | A Tauri 2 window around the hosted web app, built into a Windows installer by GitHub Actions. It adds what a browser can't do, like reading your games folder. |
+| Game scanner | `apps/desktop/scanner` | Rust code that finds game files in a folder, works out each one's console, and fingerprints it (SHA-1) so the lobby can compare copies. |
+| Game names | `apps/web/public/gamedb` | Fingerprints of known clean game dumps, used to show proper names. Built by `scripts/build-gamedb.mjs`. |
 | Server | `apps/server` | A Cloudflare Worker plus one Durable Object per party, talking to players over WebSockets. It also serves the web app. |
 | Protocol | `packages/protocol` | Every message the app and server exchange, with validation, shared by both. |
 | Game catalogue | `packages/game-catalog` | The list of games, their player limits, and the rules for when a lobby can start. |
@@ -35,10 +39,26 @@ Party games for friends who live in different places. Create a party, share the 
    ```
 5. Open the address Vite prints (usually http://localhost:5173). Open it in a second browser window to join your own party as another player.
 
+## Your games folder
+
+In the Windows app, open **Games** and click **Choose games folder**. PartyLink looks through it and its subfolders for:
+
+| Console | Files |
+| --- | --- |
+| GameCube, Wii | `.iso`, `.gcm`, `.rvz`, `.wia`, `.wbfs` |
+| Nintendo 64 | `.z64`, `.n64`, `.v64` |
+| PlayStation | `.cue` with its `.bin` tracks, or a single `.bin` |
+| SNES, NES, Game Boy Advance, Mega Drive | `.sfc`, `.smc`, `.nes`, `.gba`, `.md`, `.gen`, `.bin`, or a `.zip` holding one game |
+
+Netplay only works when everyone's file is identical, so when the host picks a game, each player's app checks their own folder for the same fingerprint. Only the fingerprint, console and title are shared, never file paths.
+
+To refresh the list of known games, run `node scripts/build-gamedb.mjs`.
+
 ## Tests
 
 ```
 pnpm test               # fast unit tests
+cargo test --manifest-path apps/desktop/scanner/Cargo.toml   # the games folder scanner
 pnpm build              # builds the web app
 pnpm test:integration   # starts the real server locally and connects real WebSocket clients
 pnpm test:e2e           # drives real browser windows against the real server (run `pnpm build` first)
@@ -62,6 +82,10 @@ On GitHub, open **Actions**, pick **Desktop app**, and click **Run workflow**. I
 
 Bump that `version` before publishing a new release. The desktop app loads the hosted web app, so most updates reach everyone without a new installer.
 
+## Credits
+
+Game names come from the No-Intro and Redump lists, via [libretro-database](https://github.com/libretro/libretro-database) (CC BY-SA 4.0); the files in `apps/web/public/gamedb` keep that licence. Box art is loaded from [libretro-thumbnails](https://github.com/libretro-thumbnails).
+
 ## License
 
-All rights reserved. No license is granted to use, copy, or distribute this code.
+All rights reserved. No license is granted to use, copy, or distribute this code, except the game name lists credited above.

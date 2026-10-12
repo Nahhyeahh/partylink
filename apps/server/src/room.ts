@@ -20,6 +20,8 @@ import {
   rejoin,
   releaseExpiredSeats,
   selectGame,
+  selectOwnGame,
+  setGameCopy,
   setColor,
   setReady,
   toLobbyState,
@@ -160,6 +162,12 @@ export class Room extends DurableObject<Env> {
         break;
       case "selectGame":
         result = selectGame(this.lobby, attachment.playerId, msg.gameId);
+        break;
+      case "selectOwnGame":
+        result = selectOwnGame(this.lobby, attachment.playerId, msg.game);
+        break;
+      case "setGameCopy":
+        result = setGameCopy(this.lobby, attachment.playerId, msg.sha1, msg.copy);
         break;
     }
     if (!result.ok) {
