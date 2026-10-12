@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "No native permissions yet. The hosted web app runs like a normal web page.",
+  "windows": ["main"],
+  "permissions": []
+}

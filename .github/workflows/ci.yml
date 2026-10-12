@@ -21,3 +21,6 @@ jobs:
       - run: pnpm build
       # Starts the real server locally and connects real WebSocket clients to it.
       - run: pnpm test:integration
+      # Drives several real browser windows (desktop and phone sized) against the real server.
+      - run: pnpm --filter @partylink/e2e exec playwright install --with-deps chromium
+      - run: pnpm test:e2e

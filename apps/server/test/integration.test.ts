@@ -225,4 +225,30 @@ describe("rooms over real WebSockets", () => {
     await c.waitFor((m) => m.type === "error" && m.code === "rate_limited");
     c.close();
   });
+
+  it("syncs ready states, colours, and the host's game pick to everyone", async () => {
+    const code = await createRoom();
+    const ada = new Client(code);
+    await ada.send({ type: "join", name: "Ada", color: "teal" });
+    await ada.waitFor(isWelcome);
+    const bo = new Client(code);
+    await bo.send({ type: "join", name: "Bo", color: "teal" });
+    const boWelcome = await bo.waitFor(isWelcome);
+    expect(boWelcome.lobby.players.map((p) => p.color)).toEqual(["teal", "coral"]);
+
+    await bo.send({ type: "selectGame", gameId: "trivia-blitz" });
+    await bo.waitFor((m) => m.type === "error" && m.code === "not_host");
+
+    await ada.send({ type: "selectGame", gameId: "trivia-blitz" });
+    await bo.send({ type: "setReady", ready: true });
+    await bo.send({ type: "setColor", color: "pink" });
+    await ada.waitFor(
+      (m) => m.type === "lobby" && m.lobby.selectedGameId === "trivia-blitz" && m.lobby.players[1]?.ready === true && m.lobby.players[1]?.color === "pink",
+    );
+
+    await bo.send({ type: "setColor", color: "teal" });
+    await bo.waitFor((m) => m.type === "error" && m.code === "color_taken");
+    ada.close();
+    bo.close();
+  });
 });

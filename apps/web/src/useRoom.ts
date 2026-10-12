@@ -1,4 +1,4 @@
-import { type LobbyState, parseServerMessage } from "@partylink/protocol";
+import { type AvatarColor, type ClientMessage, type LobbyState, parseServerMessage } from "@partylink/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { roomSocketUrl } from "./api";
 import { seatToken } from "./storage";
@@ -11,6 +11,11 @@ export interface RoomConnection {
   playerId: string | null;
   /** Set when the room refused us or went away; the lobby can't continue. */
   fatalError: string | null;
+  /** The latest non-fatal problem, such as "Someone else already has that colour." */
+  notice: string | null;
+  setReady: (ready: boolean) => void;
+  setColor: (color: AvatarColor) => void;
+  selectGame: (gameId: string | null) => void;
   leave: () => void;
 }
 
@@ -18,11 +23,12 @@ const RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 8000];
 const PING_EVERY_MS = 20_000;
 
 /** Connects to a room, joins (or rejoins with a saved token), and keeps the connection alive. */
-export function useRoom(code: string, name: string): RoomConnection {
+export function useRoom(code: string, name: string, color: AvatarColor): RoomConnection {
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
   const [lobby, setLobby] = useState<LobbyState | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [fatalError, setFatalError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const stoppedRef = useRef(false);
 
@@ -44,7 +50,7 @@ export function useRoom(code: string, name: string): RoomConnection {
 
       ws.onopen = () => {
         const token = seatToken.get(code);
-        ws.send(JSON.stringify(token ? { type: "rejoin", token } : { type: "join", name }));
+        ws.send(JSON.stringify(token ? { type: "rejoin", token } : { type: "join", name, color }));
         pingTimer = setInterval(() => ws.readyState === WebSocket.OPEN && ws.send("ping"), PING_EVERY_MS);
       };
 
@@ -66,7 +72,7 @@ export function useRoom(code: string, name: string): RoomConnection {
           } else if (msg.code === "room_full" || msg.code === "invalid_name" || msg.code === "room_not_found") {
             stop(msg.message);
           } else {
-            console.warn("room error", msg);
+            setNotice(msg.message);
           }
         }
       };
@@ -92,7 +98,14 @@ export function useRoom(code: string, name: string): RoomConnection {
       clearInterval(pingTimer);
       socketRef.current?.close();
     };
+    // The colour only matters for the first join; changes after that go through setColor.
   }, [code, name]);
+
+  const send = useCallback((message: ClientMessage) => {
+    setNotice(null);
+    const ws = socketRef.current;
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
+  }, []);
 
   const leave = useCallback(() => {
     seatToken.set(code, null);
@@ -101,5 +114,15 @@ export function useRoom(code: string, name: string): RoomConnection {
     else stoppedRef.current = true;
   }, [code]);
 
-  return { status, lobby, playerId, fatalError, leave };
+  return {
+    status,
+    lobby,
+    playerId,
+    fatalError,
+    notice,
+    setReady: useCallback((ready: boolean) => send({ type: "setReady", ready }), [send]),
+    setColor: useCallback((c: AvatarColor) => send({ type: "setColor", color: c }), [send]),
+    selectGame: useCallback((gameId: string | null) => send({ type: "selectGame", gameId }), [send]),
+    leave,
+  };
 }

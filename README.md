@@ -2,15 +2,21 @@
 
 Party games for friends who live in different places. Create a party, share the 4-letter code, and play together from your PCs or phones.
 
-> **Status:** early development. Right now you can create a party, have friends join by code or invite link, and see each other in the lobby live. Games come next.
+> **Status:** early development. You can create a party, have friends join by code or invite link, pick avatar colours, mark yourselves ready, and the host can choose a game. The games themselves come next, starting with Trivia Blitz.
+
+**Play in a browser:** https://partylink.adrianpaintaway.workers.dev
+
+**Windows app:** download the latest `PartyLink_..._x64-setup.exe` from [Releases](../../releases). Windows may say "Windows protected your PC" because the installer isn't signed yet; click **More info**, then **Run anyway**.
 
 ## How it's built
 
 | Part | Folder | What it is |
 | --- | --- | --- |
-| Web app | `apps/web` | React + TypeScript. The home screen, lobby, and (later) games and phone controllers. |
+| Web app | `apps/web` | React + TypeScript. The home screen, game library, lobby, and (later) games and phone controllers. |
+| Desktop app | `apps/desktop` | A Tauri 2 window around the hosted web app, built into a Windows installer by GitHub Actions. |
 | Server | `apps/server` | A Cloudflare Worker plus one Durable Object per party, talking to players over WebSockets. It also serves the web app. |
 | Protocol | `packages/protocol` | Every message the app and server exchange, with validation, shared by both. |
+| Game catalogue | `packages/game-catalog` | The list of games, their player limits, and the rules for when a lobby can start. |
 
 ## Running it on your PC (Windows)
 
@@ -35,6 +41,7 @@ Party games for friends who live in different places. Create a party, share the 
 pnpm test               # fast unit tests
 pnpm build              # builds the web app
 pnpm test:integration   # starts the real server locally and connects real WebSocket clients
+pnpm test:e2e           # drives real browser windows against the real server (run `pnpm build` first)
 pnpm typecheck
 ```
 
@@ -48,6 +55,17 @@ Merges to `main` deploy automatically once two repository secrets are set under 
 - `CLOUDFLARE_API_TOKEN`: create one under **My Profile → API Tokens** with the **Edit Cloudflare Workers** template.
 
 Until they're set, the deploy step is skipped.
+
+## Releasing the Windows app
+
+Push a version tag and GitHub Actions builds the installer and publishes a Release:
+
+```
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Bump `version` in `apps/desktop/src-tauri/tauri.conf.json` before tagging a new release. The desktop app loads the hosted web app, so most updates reach everyone without a new installer.
 
 ## License
 

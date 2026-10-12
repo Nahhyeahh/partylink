@@ -12,7 +12,8 @@
   "dependencies": {
     "@partylink/protocol": "workspace:*",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "@partylink/game-catalog": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",

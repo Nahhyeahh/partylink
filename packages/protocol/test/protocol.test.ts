@@ -53,6 +53,14 @@ describe("client message parsing", () => {
     expect(parseClientMessage(JSON.stringify({ type: "rejoin", token }))).toEqual({ type: "rejoin", token });
   });
 
+  it("parses lobby actions", () => {
+    expect(parseClientMessage('{"type":"setReady","ready":true}')).toEqual({ type: "setReady", ready: true });
+    expect(parseClientMessage('{"type":"setColor","color":"teal"}')).toEqual({ type: "setColor", color: "teal" });
+    expect(parseClientMessage('{"type":"selectGame","gameId":"trivia-blitz"}')).toEqual({ type: "selectGame", gameId: "trivia-blitz" });
+    expect(parseClientMessage('{"type":"selectGame","gameId":null}')).toEqual({ type: "selectGame", gameId: null });
+    expect(parseClientMessage('{"type":"join","name":"Ada","color":"pink"}')).toEqual({ type: "join", name: "Ada", color: "pink" });
+  });
+
   it("rejects malformed input", () => {
     const bad = [
       "not json",
@@ -61,6 +69,9 @@ describe("client message parsing", () => {
       '{"type":"join"}',
       '{"type":"join","name":"Ada","extra":1}',
       '{"type":"rejoin","token":"short"}',
+      '{"type":"setReady","ready":"yes"}',
+      '{"type":"setColor","color":"chartreuse"}',
+      '{"type":"selectGame","gameId":"../etc"}',
       JSON.stringify({ type: "join", name: "x".repeat(MAX_MESSAGE_BYTES) }),
     ];
     for (const raw of bad) expect(parseClientMessage(raw)).toBeNull();
