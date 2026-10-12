@@ -10,10 +10,11 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
+    "@partylink/game-catalog": "workspace:*",
     "@partylink/protocol": "workspace:*",
+    "@tauri-apps/api": "^2.12.3",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "@partylink/game-catalog": "workspace:*"
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",

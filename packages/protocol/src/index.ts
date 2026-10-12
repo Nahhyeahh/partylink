@@ -45,6 +45,56 @@ export type AvatarColor = z.infer<typeof avatarColorSchema>;
 
 const gameId = z.string().regex(/^[a-z0-9-]{1,40}$/);
 
+// Players' own games ----------------------------------------------------------
+// PartyLink never ships games. Each player's desktop app scans their own games
+// folder and fingerprints each file (SHA-1). Netplay only works when everyone's
+// file is identical, so the lobby compares fingerprints before starting.
+
+/** Consoles PartyLink can run through emulators. Matches the desktop scanner's ids. */
+export const GAME_SYSTEMS = ["gc", "wii", "n64", "ps1", "snes", "nes", "gba", "md"] as const;
+export const gameSystemSchema = z.enum(GAME_SYSTEMS);
+export type GameSystem = z.infer<typeof gameSystemSchema>;
+
+export const SYSTEM_NAMES: Record<GameSystem, string> = {
+  gc: "GameCube",
+  wii: "Wii",
+  n64: "Nintendo 64",
+  ps1: "PlayStation",
+  snes: "Super Nintendo",
+  nes: "NES",
+  gba: "Game Boy Advance",
+  md: "Mega Drive",
+};
+
+export const MAX_GAME_TITLE_LENGTH = 120;
+
+const sha1 = z.string().regex(/^[0-9a-f]{40}$/);
+
+/** A game from the host's folder, identified by its file fingerprint. */
+export const ownGameSchema = z
+  .object({
+    system: gameSystemSchema,
+    sha1,
+    title: z
+      .string()
+      .max(400)
+      .transform((t) => t.replace(/[\p{Cc}\p{Cf}]/gu, "").trim().slice(0, MAX_GAME_TITLE_LENGTH))
+      .pipe(z.string().min(1)),
+  })
+  .strict();
+export type OwnGame = z.infer<typeof ownGameSchema>;
+
+/**
+ * Whether a player has the selected game:
+ * - checking: their app hasn't answered yet
+ * - match: they have an identical file
+ * - missing: their games folder has no identical file
+ * - no-app: they're in a browser, which can't run emulators
+ */
+export const GAME_COPY_STATES = ["checking", "match", "missing", "no-app"] as const;
+export const gameCopySchema = z.enum(GAME_COPY_STATES);
+export type GameCopy = z.infer<typeof gameCopySchema>;
+
 // Client -> server
 
 export const clientMessageSchema = z.discriminatedUnion("type", [
@@ -56,6 +106,10 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("setColor"), color: avatarColorSchema }).strict(),
   // Host only. null clears the selection.
   z.object({ type: z.literal("selectGame"), gameId: gameId.nullable() }).strict(),
+  // Host only. A game from the host's own folder; null clears it.
+  z.object({ type: z.literal("selectOwnGame"), game: ownGameSchema.nullable() }).strict(),
+  // Each player's answer to "do you have this game?" for the selected own game.
+  z.object({ type: z.literal("setGameCopy"), sha1, copy: z.enum(["match", "missing", "no-app"]) }).strict(),
 ]);
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
 
@@ -68,6 +122,8 @@ export const lobbyPlayerSchema = z.object({
   isHost: z.boolean(),
   ready: z.boolean(),
   connected: z.boolean(),
+  /** Only meaningful while an own game is selected. */
+  gameCopy: gameCopySchema,
 });
 export type LobbyPlayer = z.infer<typeof lobbyPlayerSchema>;
 
@@ -75,6 +131,8 @@ export const lobbyStateSchema = z.object({
   code: z.string(),
   maxPlayers: z.number(),
   selectedGameId: z.string().nullable(),
+  /** A game from the host's folder. At most one of this and selectedGameId is set. */
+  selectedOwnGame: ownGameSchema.nullable(),
   players: z.array(lobbyPlayerSchema),
 });
 export type LobbyState = z.infer<typeof lobbyStateSchema>;

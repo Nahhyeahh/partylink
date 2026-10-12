@@ -1,4 +1,4 @@
-import { type AvatarColor, type ClientMessage, type LobbyState, parseServerMessage } from "@partylink/protocol";
+import { type AvatarColor, type ClientMessage, type LobbyState, type OwnGame, parseServerMessage } from "@partylink/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { roomSocketUrl } from "./api";
 import { seatToken } from "./storage";
@@ -16,6 +16,8 @@ export interface RoomConnection {
   setReady: (ready: boolean) => void;
   setColor: (color: AvatarColor) => void;
   selectGame: (gameId: string | null) => void;
+  selectOwnGame: (game: OwnGame | null) => void;
+  setGameCopy: (sha1: string, copy: "match" | "missing" | "no-app") => void;
   leave: () => void;
 }
 
@@ -123,6 +125,11 @@ export function useRoom(code: string, name: string, color: AvatarColor): RoomCon
     setReady: useCallback((ready: boolean) => send({ type: "setReady", ready }), [send]),
     setColor: useCallback((c: AvatarColor) => send({ type: "setColor", color: c }), [send]),
     selectGame: useCallback((gameId: string | null) => send({ type: "selectGame", gameId }), [send]),
+    selectOwnGame: useCallback((game: OwnGame | null) => send({ type: "selectOwnGame", game }), [send]),
+    setGameCopy: useCallback(
+      (sha1: string, copy: "match" | "missing" | "no-app") => send({ type: "setGameCopy", sha1, copy }),
+      [send],
+    ),
     leave,
   };
 }

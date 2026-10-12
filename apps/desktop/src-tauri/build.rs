@@ -1,3 +1,8 @@
 fn main() {
-    tauri_build::build()
+    // Listing the app's commands makes Tauri generate an "allow-<command>"
+    // permission for each, so capabilities/ must grant them explicitly.
+    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
+        tauri_build::AppManifest::new().commands(&["get_games_folder", "choose_games_folder", "scan_games"]),
+    ))
+    .expect("failed to run tauri-build");
 }

@@ -5,6 +5,8 @@ import { createRoom, getRoom } from "../api";
 import { Avatar } from "../components/Avatar";
 import { ColorPicker } from "../components/ColorPicker";
 import { GameCard } from "../components/GameCard";
+import { OwnGameCard } from "../components/OwnGameCard";
+import { useMyGames } from "../myGames";
 import { savedColor, savedName, seatToken } from "../storage";
 
 interface Props {
@@ -19,6 +21,8 @@ export function Home({ initialCode, onEnter, onBrowse }: Props) {
   const [code, setCode] = useState(initialCode);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const myGames = useMyGames();
+  const mine = myGames.status === "ready" ? myGames.games : [];
 
   const pickColor = (c: AvatarColor) => {
     setColor(c);
@@ -116,15 +120,15 @@ export function Home({ initialCode, onEnter, onBrowse }: Props) {
 
       <section className="home-games">
         <div className="row">
-          <h2>Games</h2>
+          <h2>{mine.length > 0 ? "Your games" : "Games"}</h2>
           <button className="link" onClick={onBrowse}>
-            See all {GAMES.length}
+            See all {mine.length > 0 ? mine.length : GAMES.length}
           </button>
         </div>
         <div className="game-row">
-          {GAMES.slice(0, 3).map((g) => (
-            <GameCard key={g.id} game={g} compact />
-          ))}
+          {mine.length > 0
+            ? mine.slice(0, 3).map((g) => <OwnGameCard key={g.path} game={g} compact />)
+            : GAMES.slice(0, 3).map((g) => <GameCard key={g.id} game={g} compact />)}
         </div>
       </section>
     </div>

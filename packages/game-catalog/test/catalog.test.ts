@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canStart, GAMES, type GameInfo, getGame } from "../src/index";
+import { canStart, canStartOwnGame, GAMES, type GameInfo, getGame } from "../src/index";
 
 describe("catalogue", () => {
   it("has unique, URL-safe ids", () => {
@@ -42,5 +42,43 @@ describe("canStart", () => {
   it("waits for everyone to be ready", () => {
     expect(canStart(playable, [p(true), p(false)])).toEqual({ ok: false, reason: "Waiting for everyone to be ready." });
     expect(canStart(playable, [p(true), p(true)])).toEqual({ ok: true });
+  });
+});
+
+describe("canStartOwnGame", () => {
+  const game = { title: "Mario Party 2 (USA)" };
+  type Copy = "checking" | "match" | "missing" | "no-app";
+  const p = (name: string, gameCopy: Copy, ready = true, connected = true) => ({ name, gameCopy, ready, connected });
+
+  it("starts when everyone has the same copy and is ready", () => {
+    expect(canStartOwnGame(game, [p("Adrian", "match"), p("Sam", "match")])).toEqual({ ok: true });
+  });
+
+  it("names who is in a browser", () => {
+    expect(canStartOwnGame(game, [p("Adrian", "match"), p("Sam", "no-app")])).toEqual({
+      ok: false,
+      reason: "Sam needs the PartyLink app to play Mario Party 2 (USA).",
+    });
+  });
+
+  it("names everyone missing the game", () => {
+    expect(canStartOwnGame(game, [p("Adrian", "match"), p("Sam", "missing"), p("Kai", "missing"), p("Jo", "missing")])).toEqual({
+      ok: false,
+      reason: "Sam, Kai and Jo don't have the same copy of Mario Party 2 (USA).",
+    });
+  });
+
+  it("waits for answers, then for ready", () => {
+    expect(canStartOwnGame(game, [p("Adrian", "match"), p("Sam", "checking")])).toMatchObject({ ok: false, reason: "Checking everyone has the game…" });
+    expect(canStartOwnGame(game, [p("Adrian", "match"), p("Sam", "match", false)])).toMatchObject({
+      ok: false,
+      reason: "Waiting for everyone to be ready.",
+    });
+  });
+
+  it("ignores disconnected players and caps the party at four", () => {
+    expect(canStartOwnGame(game, [p("Adrian", "match"), p("Gone", "missing", false, false)])).toEqual({ ok: true });
+    const five = ["A", "B", "C", "D", "E"].map((n) => p(n, "match"));
+    expect(canStartOwnGame(game, five)).toMatchObject({ ok: false, reason: "Console games allow at most 4 players." });
   });
 });

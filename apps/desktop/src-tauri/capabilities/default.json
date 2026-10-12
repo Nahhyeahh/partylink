@@ -1,7 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "No native permissions yet. The hosted web app runs like a normal web page.",
+  "description": "What the PartyLink web app may ask the desktop app to do: read the window's basics and scan the player's games folder.",
   "windows": ["main"],
-  "permissions": []
+  "remote": {
+    "urls": ["https://partylink.adrianpaintaway.workers.dev/*"]
+  },
+  "permissions": ["core:default", "allow-get-games-folder", "allow-choose-games-folder", "allow-scan-games"]
 }

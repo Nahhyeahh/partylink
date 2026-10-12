@@ -1,10 +1,14 @@
-import { canStart, GAMES, getGame } from "@partylink/game-catalog";
-import type { AvatarColor } from "@partylink/protocol";
-import { useState } from "react";
+import { canStart, canStartOwnGame, GAMES, getGame } from "@partylink/game-catalog";
+import type { AvatarColor, GameCopy } from "@partylink/protocol";
+import { useEffect, useState } from "react";
 import { inviteLink } from "../api";
 import { Avatar } from "../components/Avatar";
 import { ColorPicker } from "../components/ColorPicker";
 import { GameCard } from "../components/GameCard";
+import { MyGames } from "../components/MyGames";
+import { OwnGameCard } from "../components/OwnGameCard";
+import { type MyGamesState, useMyGames } from "../myGames";
+import { isDesktop } from "../desktop";
 import { savedColor } from "../storage";
 import { useRoom } from "../useRoom";
 
@@ -14,6 +18,29 @@ const STATUS_LABEL = {
   reconnecting: "Reconnecting…",
   closed: "Disconnected",
 } as const;
+
+const COPY_LABEL: Record<GameCopy, string> = {
+  checking: "Checking game…",
+  match: "Has the game",
+  missing: "Missing the game",
+  "no-app": "Needs the app",
+};
+
+/** What this player's app should tell the room about the selected game, or null to wait. */
+function myCopy(games: MyGamesState, sha1: string): "match" | "missing" | "no-app" | null {
+  switch (games.status) {
+    case "browser":
+    case "outdated":
+      return "no-app";
+    case "no-folder":
+    case "error":
+      return "missing";
+    case "ready":
+      return games.games.some((g) => g.sha1 === sha1) ? "match" : "missing";
+    default:
+      return null;
+  }
+}
 
 interface Props {
   code: string;
@@ -27,11 +54,24 @@ export function Lobby({ code, name, color, onExit }: Props) {
   const { status, lobby, playerId, fatalError, notice } = room;
   const [copied, setCopied] = useState(false);
   const [choosing, setChoosing] = useState(false);
+  const [pickerTab, setPickerTab] = useState<"mine" | "originals">(isDesktop() ? "mine" : "originals");
+  const games = useMyGames();
 
   const me = lobby?.players.find((p) => p.id === playerId);
   const isHost = me?.isHost ?? false;
   const game = lobby?.selectedGameId ? getGame(lobby.selectedGameId) : undefined;
-  const startCheck = canStart(game, lobby?.players ?? []);
+  const ownGame = lobby?.selectedOwnGame ?? null;
+  const startCheck = ownGame ? canStartOwnGame(ownGame, lobby?.players ?? []) : canStart(game, lobby?.players ?? []);
+
+  // Tell the room whether we have the host's chosen game. Answers again after
+  // the folder is rescanned or changed, since the answer may change.
+  const answer = ownGame ? myCopy(games, ownGame.sha1) : null;
+  const myAnswer = me?.gameCopy;
+  const ownSha1 = ownGame?.sha1;
+  const { setGameCopy } = room;
+  useEffect(() => {
+    if (ownSha1 && answer && answer !== myAnswer) setGameCopy(ownSha1, answer);
+  }, [ownSha1, answer, myAnswer, setGameCopy]);
 
   const copyInvite = async () => {
     try {
@@ -89,6 +129,9 @@ export function Lobby({ code, name, color, onExit }: Props) {
                   {p.id === playerId && <span className="muted"> (you)</span>}
                 </span>
                 {p.isHost && <span className="badge">Host</span>}
+                {ownGame && p.connected && (
+                  <span className={`copy-state copy-${p.gameCopy}`}>{COPY_LABEL[p.gameCopy]}</span>
+                )}
                 {!p.connected ? (
                   <span className="badge muted-badge">Reconnecting</span>
                 ) : (
@@ -121,26 +164,54 @@ export function Lobby({ code, name, color, onExit }: Props) {
             <h2>Game</h2>
             {isHost && (
               <button className="link" onClick={() => setChoosing(!choosing)}>
-                {choosing ? "Done" : game ? "Change" : "Choose"}
+                {choosing ? "Done" : game || ownGame ? "Change" : "Choose"}
               </button>
             )}
           </div>
 
           {choosing && isHost ? (
-            <div className="game-picker">
-              {GAMES.map((g) => (
-                <GameCard
-                  key={g.id}
-                  game={g}
+            <>
+              <div className="tabs picker-tabs" role="tablist">
+                <button role="tab" aria-selected={pickerTab === "mine"} onClick={() => setPickerTab("mine")}>
+                  Your games
+                </button>
+                <button role="tab" aria-selected={pickerTab === "originals"} onClick={() => setPickerTab("originals")}>
+                  PartyLink originals
+                </button>
+              </div>
+              {pickerTab === "mine" ? (
+                <MyGames
                   compact
-                  selected={g.id === lobby?.selectedGameId}
-                  onSelect={() => {
-                    room.selectGame(g.id);
+                  selectedSha1={ownGame?.sha1}
+                  onSelect={(g) => {
+                    room.selectOwnGame({ system: g.system, sha1: g.sha1, title: g.title });
                     setChoosing(false);
                   }}
                 />
-              ))}
-            </div>
+              ) : (
+                <div className="game-picker">
+                  {GAMES.map((g) => (
+                    <GameCard
+                      key={g.id}
+                      game={g}
+                      compact
+                      selected={g.id === lobby?.selectedGameId}
+                      onSelect={() => {
+                        room.selectGame(g.id);
+                        setChoosing(false);
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          ) : ownGame ? (
+            <>
+              <OwnGameCard game={ownGame} />
+              <p className="muted small">
+                Everyone needs the same copy of this game in their games folder. PartyLink checks that for you.
+              </p>
+            </>
           ) : game ? (
             <>
               <GameCard game={game} />
@@ -154,10 +225,14 @@ export function Lobby({ code, name, color, onExit }: Props) {
 
           {isHost ? (
             <>
-              <button className="primary big" disabled={!startCheck.ok}>
+              <button className="primary big" disabled={!startCheck.ok || ownGame !== null}>
                 Start game
               </button>
-              {!startCheck.ok && <p className="muted small center">{startCheck.reason}</p>}
+              {!startCheck.ok ? (
+                <p className="muted small center">{startCheck.reason}</p>
+              ) : (
+                ownGame && <p className="muted small center">Everyone's set. Starting games from PartyLink arrives in the next update.</p>
+              )}
             </>
           ) : (
             <p className="muted small center">The host starts the game when everyone is ready.</p>

@@ -78,3 +78,28 @@ describe("client message parsing", () => {
     expect(parseClientMessage(new ArrayBuffer(4))).toBeNull();
   });
 });
+
+describe("own game messages", () => {
+  const sha1 = "166eda1c05670d337e2c3f15a5db528ae1e5d6e3";
+
+  it("accepts a game pick and cleans its title", () => {
+    const msg = parseClientMessage(
+      JSON.stringify({ type: "selectOwnGame", game: { system: "n64", sha1, title: "  Mario Party 2\u0000 (USA) " } }),
+    );
+    expect(msg).toEqual({ type: "selectOwnGame", game: { system: "n64", sha1, title: "Mario Party 2 (USA)" } });
+    expect(parseClientMessage(JSON.stringify({ type: "selectOwnGame", game: null }))).toEqual({ type: "selectOwnGame", game: null });
+  });
+
+  it("rejects unknown consoles, bad fingerprints and empty titles", () => {
+    const pick = (game: object) => parseClientMessage(JSON.stringify({ type: "selectOwnGame", game }));
+    expect(pick({ system: "ps2", sha1, title: "x" })).toBeNull();
+    expect(pick({ system: "n64", sha1: sha1.toUpperCase(), title: "x" })).toBeNull();
+    expect(pick({ system: "n64", sha1, title: " \u0000 " })).toBeNull();
+    expect(pick({ system: "n64", sha1, title: "x", path: "C:/secret" })).toBeNull();
+  });
+
+  it("accepts copy answers but not 'checking'", () => {
+    expect(parseClientMessage(JSON.stringify({ type: "setGameCopy", sha1, copy: "match" }))).not.toBeNull();
+    expect(parseClientMessage(JSON.stringify({ type: "setGameCopy", sha1, copy: "checking" }))).toBeNull();
+  });
+});

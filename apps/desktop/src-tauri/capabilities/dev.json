@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "dev",
+  "description": "The same permissions for the local web app during `pnpm desktop:dev`.",
+  "windows": ["main"],
+  "permissions": ["core:default", "allow-get-games-folder", "allow-choose-games-folder", "allow-scan-games"]
+}

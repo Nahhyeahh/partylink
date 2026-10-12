@@ -24,3 +24,18 @@ jobs:
       # Drives several real browser windows (desktop and phone sized) against the real server.
       - run: pnpm --filter @partylink/e2e exec playwright install --with-deps chromium
       - run: pnpm test:e2e
+
+  # The desktop app's game folder scanner. It has no Tauri dependency, so it
+  # runs here; the full desktop app is built on Windows in desktop.yml.
+  scanner:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/scanner
+      - run: cargo test --manifest-path apps/desktop/scanner/Cargo.toml
+      - run: cargo clippy --manifest-path apps/desktop/scanner/Cargo.toml --all-targets -- -D warnings

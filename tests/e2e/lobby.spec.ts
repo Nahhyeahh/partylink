@@ -74,7 +74,7 @@ test("joining a party that doesn't exist shows a clear message", async ({ browse
 test("the game library lists every game with its player count", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("tab", { name: "Games" }).click();
-  await expect(page.getByRole("heading", { name: "Game library" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "PartyLink originals" })).toBeVisible();
   await expect(page.locator(".game-grid .game-card")).toHaveCount(6);
   await expect(page.locator(".game-card", { hasText: "Trivia Blitz" })).toContainText("2–8 players");
 });

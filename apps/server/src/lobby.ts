@@ -7,8 +7,10 @@ import {
   type AvatarColor,
   cleanDisplayName,
   type ErrorCode,
+  type GameCopy,
   type LobbyState,
   MAX_PLAYERS,
+  type OwnGame,
   SEAT_HOLD_MS,
 } from "@partylink/protocol";
 
@@ -22,6 +24,8 @@ export interface Seat {
   connected: boolean;
   /** When the player last disconnected; null while connected. */
   disconnectedAt: number | null;
+  /** Whether they have the selected own game. */
+  gameCopy: GameCopy;
 }
 
 export interface LobbyData {
@@ -29,6 +33,8 @@ export interface LobbyData {
   createdAt: number;
   hostId: string | null;
   selectedGameId: string | null;
+  /** A game from the host's folder. At most one of this and selectedGameId is set. */
+  selectedOwnGame: OwnGame | null;
   seats: Seat[];
   /** When the last connected player left; null while anyone is connected. */
   emptySince: number | null;
@@ -39,14 +45,16 @@ export type JoinResult = { ok: true; seat: Seat } | Failure;
 export type ActionResult = { ok: true } | Failure;
 
 export function createLobby(code: string, now: number): LobbyData {
-  return { code, createdAt: now, hostId: null, selectedGameId: null, seats: [], emptySince: now };
+  return { code, createdAt: now, hostId: null, selectedGameId: null, selectedOwnGame: null, seats: [], emptySince: now };
 }
 
 /** Fills in fields added after a lobby was stored, so rooms survive a deploy. */
 export function upgradeLobby(stored: LobbyData): LobbyData {
   stored.selectedGameId ??= null;
+  stored.selectedOwnGame ??= null;
   for (const seat of stored.seats) {
     seat.ready ??= false;
+    seat.gameCopy ??= "checking";
     if (!seat.color) seat.color = freeColor(stored, undefined);
   }
   return stored;
@@ -80,6 +88,7 @@ export function join(
     joinedAt: now,
     connected: true,
     disconnectedAt: null,
+    gameCopy: "checking",
   };
   lobby.seats.push(seat);
   lobby.hostId ??= seat.id;
@@ -137,10 +146,41 @@ export function setColor(lobby: LobbyData, playerId: string, color: AvatarColor)
 export function selectGame(lobby: LobbyData, playerId: string, gameId: string | null): ActionResult {
   if (lobby.hostId !== playerId) return { ok: false, code: "not_host", message: "Only the host can pick the game." };
   if (gameId !== null && !getGame(gameId)) return { ok: false, code: "unknown_game", message: "That game doesn't exist." };
-  if (lobby.selectedGameId === gameId) return { ok: true };
+  if (lobby.selectedGameId === gameId && lobby.selectedOwnGame === null) return { ok: true };
   lobby.selectedGameId = gameId;
-  for (const seat of lobby.seats) seat.ready = false;
+  lobby.selectedOwnGame = null;
+  resetChoices(lobby);
   return { ok: true };
+}
+
+/**
+ * Host only. Picks a game from the host's own folder. Everyone's app then
+ * checks their folder for an identical file and answers with setGameCopy.
+ */
+export function selectOwnGame(lobby: LobbyData, playerId: string, game: OwnGame | null): ActionResult {
+  if (lobby.hostId !== playerId) return { ok: false, code: "not_host", message: "Only the host can pick the game." };
+  if (game === null && lobby.selectedOwnGame === null) return { ok: true };
+  if (game !== null && lobby.selectedOwnGame?.sha1 === game.sha1) return { ok: true };
+  lobby.selectedOwnGame = game;
+  lobby.selectedGameId = null;
+  resetChoices(lobby);
+  return { ok: true };
+}
+
+/** Records whether a player has the selected own game. Answers about an older selection are ignored. */
+export function setGameCopy(lobby: LobbyData, playerId: string, sha1: string, copy: Exclude<GameCopy, "checking">): ActionResult {
+  const seat = lobby.seats.find((s) => s.id === playerId);
+  if (!seat) return { ok: false, code: "not_joined", message: "Join the party first." };
+  if (lobby.selectedOwnGame?.sha1 === sha1) seat.gameCopy = copy;
+  return { ok: true };
+}
+
+/** A new game means everyone agrees again and checks their folder again. */
+function resetChoices(lobby: LobbyData): void {
+  for (const seat of lobby.seats) {
+    seat.ready = false;
+    seat.gameCopy = "checking";
+  }
 }
 
 /** Releases seats whose player has been gone longer than the hold time. Returns true if anything changed. */
@@ -168,6 +208,7 @@ export function toLobbyState(lobby: LobbyData): LobbyState {
     code: lobby.code,
     maxPlayers: MAX_PLAYERS,
     selectedGameId: lobby.selectedGameId,
+    selectedOwnGame: lobby.selectedOwnGame,
     players: lobby.seats.map((s) => ({
       id: s.id,
       name: s.name,
@@ -175,6 +216,7 @@ export function toLobbyState(lobby: LobbyData): LobbyState {
       isHost: s.id === lobby.hostId,
       ready: s.ready,
       connected: s.connected,
+      gameCopy: s.gameCopy,
     })),
   };
 }

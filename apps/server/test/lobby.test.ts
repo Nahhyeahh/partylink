@@ -11,7 +11,9 @@ import {
   rejoin,
   releaseExpiredSeats,
   selectGame,
+  selectOwnGame,
   setColor,
+  setGameCopy,
   setReady,
   toLobbyState,
   upgradeLobby,
@@ -117,7 +119,7 @@ describe("host handover", () => {
     markDisconnected(lobby, lobby.seats[0]!.id, 0);
     releaseExpiredSeats(lobby, SEAT_HOLD_MS);
     expect(toLobbyState(lobby).players).toEqual([
-      { id: expect.any(String), name: "Bo", color: expect.any(String), isHost: true, ready: false, connected: true },
+      { id: expect.any(String), name: "Bo", color: expect.any(String), isHost: true, ready: false, connected: true, gameCopy: "checking" },
     ]);
   });
 
@@ -190,5 +192,63 @@ describe("stored rooms from before this version", () => {
     const old = { code: "KQZD", createdAt: 0, hostId: "p1", seats: [{ id: "p1", name: "Ada", token: "t", joinedAt: 0, connected: true, disconnectedAt: null }], emptySince: null };
     const lobby = upgradeLobby(old as unknown as Parameters<typeof upgradeLobby>[0]);
     expect(toLobbyState(lobby)).toMatchObject({ selectedGameId: null, players: [{ name: "Ada", ready: false, color: "coral" }] });
+  });
+});
+
+describe("own games", () => {
+  const ok: ActionResult = { ok: true };
+  const mp2 = { system: "n64" as const, sha1: "166eda1c05670d337e2c3f15a5db528ae1e5d6e3", title: "Mario Party 2 (USA)" };
+  const crash = { system: "ps1" as const, sha1: "fce2d66a12d49ec50aa1b93e138da6c6f646eb16", title: "Crash Bash (USA)" };
+
+  it("lets only the host pick one, and replaces any original game", () => {
+    const lobby = lobbyWith("Ada", "Bo");
+    const [host, guest] = [lobby.seats[0]!.id, lobby.seats[1]!.id];
+    selectGame(lobby, host, "trivia-blitz");
+    expect(selectOwnGame(lobby, guest, mp2)).toMatchObject({ ok: false, code: "not_host" });
+    expect(selectOwnGame(lobby, host, mp2)).toEqual(ok);
+    const state = toLobbyState(lobby);
+    expect(state.selectedOwnGame).toEqual(mp2);
+    expect(state.selectedGameId).toBeNull();
+
+    selectGame(lobby, host, "doodle-dash");
+    expect(lobby.selectedOwnGame).toBeNull();
+  });
+
+  it("records who has the game and ignores answers about an old pick", () => {
+    const lobby = lobbyWith("Ada", "Bo");
+    const [host, guest] = [lobby.seats[0]!.id, lobby.seats[1]!.id];
+    selectOwnGame(lobby, host, mp2);
+    expect(toLobbyState(lobby).players.map((p) => p.gameCopy)).toEqual(["checking", "checking"]);
+    setGameCopy(lobby, host, mp2.sha1, "match");
+    setGameCopy(lobby, guest, crash.sha1, "match");
+    expect(toLobbyState(lobby).players.map((p) => p.gameCopy)).toEqual(["match", "checking"]);
+    setGameCopy(lobby, guest, mp2.sha1, "missing");
+    expect(lobby.seats[1]!.gameCopy).toBe("missing");
+  });
+
+  it("makes everyone check and ready up again when the game changes", () => {
+    const lobby = lobbyWith("Ada", "Bo");
+    const [host, guest] = [lobby.seats[0]!.id, lobby.seats[1]!.id];
+    selectOwnGame(lobby, host, mp2);
+    setGameCopy(lobby, guest, mp2.sha1, "match");
+    setReady(lobby, guest, true);
+    selectOwnGame(lobby, host, mp2);
+    expect(lobby.seats[1]).toMatchObject({ ready: true, gameCopy: "match" });
+    selectOwnGame(lobby, host, crash);
+    expect(lobby.seats[1]).toMatchObject({ ready: false, gameCopy: "checking" });
+  });
+
+  it("starts newcomers as checking, and fills the field in for stored rooms", () => {
+    const lobby = lobbyWith("Ada");
+    selectOwnGame(lobby, lobby.seats[0]!.id, mp2);
+    join(lobby, "Cy", undefined, ids(), 5);
+    expect(lobby.seats[1]!.gameCopy).toBe("checking");
+
+    const stored = JSON.parse(JSON.stringify(lobbyWith("Old"))) as LobbyData;
+    delete (stored as Partial<LobbyData>).selectedOwnGame;
+    delete (stored.seats[0] as Partial<LobbyData["seats"][number]>).gameCopy;
+    const upgraded = upgradeLobby(stored);
+    expect(upgraded.selectedOwnGame).toBeNull();
+    expect(upgraded.seats[0]!.gameCopy).toBe("checking");
   });
 });
