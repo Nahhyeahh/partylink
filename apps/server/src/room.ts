@@ -10,6 +10,7 @@ import {
   type ServerMessage,
 } from "@partylink/protocol";
 import {
+  type ActionResult,
   createLobby,
   join,
   type LobbyData,
@@ -18,7 +19,11 @@ import {
   nextSeatExpiry,
   rejoin,
   releaseExpiredSeats,
+  selectGame,
+  setColor,
+  setReady,
   toLobbyState,
+  upgradeLobby,
 } from "./lobby";
 import { randomHex } from "./random";
 
@@ -47,7 +52,8 @@ export class Room extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
-      this.lobby = (await ctx.storage.get<LobbyData>(LOBBY_KEY)) ?? null;
+      const stored = await ctx.storage.get<LobbyData>(LOBBY_KEY);
+      this.lobby = stored ? upgradeLobby(stored) : null;
     });
     // Answers keep-alive pings without waking the object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
@@ -114,7 +120,7 @@ export class Room extends DurableObject<Env> {
       }
       const result =
         msg.type === "join"
-          ? join(this.lobby, msg.name, { id: randomHex(8), token: randomHex(16) }, now)
+          ? join(this.lobby, msg.name, msg.color, { id: randomHex(8), token: randomHex(16) }, now)
           : rejoin(this.lobby, msg.token, now);
       if (!result.ok) {
         this.sendError(ws, result.code, result.message);
@@ -141,7 +147,27 @@ export class Room extends DurableObject<Env> {
       await this.save();
       ws.close(1000, "left");
       this.broadcastLobby();
+      return;
     }
+
+    let result: ActionResult;
+    switch (msg.type) {
+      case "setReady":
+        result = setReady(this.lobby, attachment.playerId, msg.ready);
+        break;
+      case "setColor":
+        result = setColor(this.lobby, attachment.playerId, msg.color);
+        break;
+      case "selectGame":
+        result = selectGame(this.lobby, attachment.playerId, msg.gameId);
+        break;
+    }
+    if (!result.ok) {
+      this.sendError(ws, result.code, result.message);
+      return;
+    }
+    await this.save();
+    this.broadcastLobby();
   }
 
   async webSocketClose(ws: WebSocket): Promise<void> {

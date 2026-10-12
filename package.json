@@ -10,6 +10,7 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "test:integration": "pnpm --filter @partylink/server test:integration"
+    "test:integration": "pnpm --filter @partylink/server test:integration",
+    "test:e2e": "pnpm --filter @partylink/e2e test:e2e"
   }
 }

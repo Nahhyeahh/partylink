@@ -151,3 +151,7 @@ vite.config.ts.timestamp-*
 # Cloudflare Wrangler local state
 .wrangler/
 .dev.vars
+
+# Playwright output
+test-results/
+playwright-report/

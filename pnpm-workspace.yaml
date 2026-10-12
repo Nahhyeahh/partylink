@@ -1,6 +1,7 @@
 packages:
   - apps/*
   - packages/*
+  - tests/*
 
 # Packages allowed to run install scripts (they download platform binaries).
 onlyBuiltDependencies:

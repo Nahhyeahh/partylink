@@ -1,7 +1,10 @@
 // Who is in a room: seats, host, tokens and connection status.
 // Plain data and functions with no Cloudflare dependencies, so it can be unit tested
 // and stored as-is in Durable Object storage.
+import { getGame } from "@partylink/game-catalog";
 import {
+  AVATAR_COLORS,
+  type AvatarColor,
   cleanDisplayName,
   type ErrorCode,
   type LobbyState,
@@ -12,6 +15,8 @@ import {
 export interface Seat {
   id: string;
   name: string;
+  color: AvatarColor;
+  ready: boolean;
   token: string;
   joinedAt: number;
   connected: boolean;
@@ -23,24 +28,59 @@ export interface LobbyData {
   code: string;
   createdAt: number;
   hostId: string | null;
+  selectedGameId: string | null;
   seats: Seat[];
   /** When the last connected player left; null while anyone is connected. */
   emptySince: number | null;
 }
 
-export type JoinResult = { ok: true; seat: Seat } | { ok: false; code: ErrorCode; message: string };
+type Failure = { ok: false; code: ErrorCode; message: string };
+export type JoinResult = { ok: true; seat: Seat } | Failure;
+export type ActionResult = { ok: true } | Failure;
 
 export function createLobby(code: string, now: number): LobbyData {
-  return { code, createdAt: now, hostId: null, seats: [], emptySince: now };
+  return { code, createdAt: now, hostId: null, selectedGameId: null, seats: [], emptySince: now };
 }
 
-export function join(lobby: LobbyData, rawName: string, ids: { id: string; token: string }, now: number): JoinResult {
+/** Fills in fields added after a lobby was stored, so rooms survive a deploy. */
+export function upgradeLobby(stored: LobbyData): LobbyData {
+  stored.selectedGameId ??= null;
+  for (const seat of stored.seats) {
+    seat.ready ??= false;
+    if (!seat.color) seat.color = freeColor(stored, undefined);
+  }
+  return stored;
+}
+
+function freeColor(lobby: LobbyData, preferred: AvatarColor | undefined): AvatarColor {
+  const taken = new Set(lobby.seats.map((s) => s.color));
+  if (preferred && !taken.has(preferred)) return preferred;
+  // With at most MAX_PLAYERS seats and as many colours, one is always free.
+  return AVATAR_COLORS.find((c) => !taken.has(c)) ?? AVATAR_COLORS[0];
+}
+
+export function join(
+  lobby: LobbyData,
+  rawName: string,
+  preferredColor: AvatarColor | undefined,
+  ids: { id: string; token: string },
+  now: number,
+): JoinResult {
   const name = cleanDisplayName(rawName);
   if (!name) return { ok: false, code: "invalid_name", message: "Please enter a name." };
   if (lobby.seats.length >= MAX_PLAYERS) {
     return { ok: false, code: "room_full", message: `This party is full (${MAX_PLAYERS} players).` };
   }
-  const seat: Seat = { id: ids.id, name, token: ids.token, joinedAt: now, connected: true, disconnectedAt: null };
+  const seat: Seat = {
+    id: ids.id,
+    name,
+    color: freeColor(lobby, preferredColor),
+    ready: false,
+    token: ids.token,
+    joinedAt: now,
+    connected: true,
+    disconnectedAt: null,
+  };
   lobby.seats.push(seat);
   lobby.hostId ??= seat.id;
   lobby.emptySince = null;
@@ -76,6 +116,33 @@ export function leave(lobby: LobbyData, playerId: string, now: number): void {
   if (lobby.seats.every((s) => !s.connected)) lobby.emptySince ??= now;
 }
 
+export function setReady(lobby: LobbyData, playerId: string, ready: boolean): ActionResult {
+  const seat = lobby.seats.find((s) => s.id === playerId);
+  if (!seat) return { ok: false, code: "not_joined", message: "Join the party first." };
+  seat.ready = ready;
+  return { ok: true };
+}
+
+export function setColor(lobby: LobbyData, playerId: string, color: AvatarColor): ActionResult {
+  const seat = lobby.seats.find((s) => s.id === playerId);
+  if (!seat) return { ok: false, code: "not_joined", message: "Join the party first." };
+  if (lobby.seats.some((s) => s.id !== playerId && s.color === color)) {
+    return { ok: false, code: "color_taken", message: "Someone else already has that colour." };
+  }
+  seat.color = color;
+  return { ok: true };
+}
+
+/** Host only. Changing the game clears everyone's ready state, since they agreed to the old one. */
+export function selectGame(lobby: LobbyData, playerId: string, gameId: string | null): ActionResult {
+  if (lobby.hostId !== playerId) return { ok: false, code: "not_host", message: "Only the host can pick the game." };
+  if (gameId !== null && !getGame(gameId)) return { ok: false, code: "unknown_game", message: "That game doesn't exist." };
+  if (lobby.selectedGameId === gameId) return { ok: true };
+  lobby.selectedGameId = gameId;
+  for (const seat of lobby.seats) seat.ready = false;
+  return { ok: true };
+}
+
 /** Releases seats whose player has been gone longer than the hold time. Returns true if anything changed. */
 export function releaseExpiredSeats(lobby: LobbyData, now: number): boolean {
   const expired = lobby.seats.filter((s) => !s.connected && s.disconnectedAt !== null && now - s.disconnectedAt >= SEAT_HOLD_MS);
@@ -100,6 +167,14 @@ export function toLobbyState(lobby: LobbyData): LobbyState {
   return {
     code: lobby.code,
     maxPlayers: MAX_PLAYERS,
-    players: lobby.seats.map((s) => ({ id: s.id, name: s.name, isHost: s.id === lobby.hostId, connected: s.connected })),
+    selectedGameId: lobby.selectedGameId,
+    players: lobby.seats.map((s) => ({
+      id: s.id,
+      name: s.name,
+      color: s.color,
+      isHost: s.id === lobby.hostId,
+      ready: s.ready,
+      connected: s.connected,
+    })),
   };
 }

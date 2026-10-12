@@ -38,13 +38,24 @@ export function cleanDisplayName(input: string): string | null {
 
 const token = z.string().regex(/^[0-9a-f]{32}$/);
 
+/** Avatar colours a player can pick. Each player in a room has a different one. */
+export const AVATAR_COLORS = ["coral", "amber", "lime", "teal", "sky", "violet", "pink", "slate"] as const;
+export const avatarColorSchema = z.enum(AVATAR_COLORS);
+export type AvatarColor = z.infer<typeof avatarColorSchema>;
+
+const gameId = z.string().regex(/^[a-z0-9-]{1,40}$/);
+
 // Client -> server
 
 export const clientMessageSchema = z.discriminatedUnion("type", [
   // First message on every connection: a new player sends a name, a returning one sends their token.
-  z.object({ type: z.literal("join"), name: z.string().max(200) }).strict(),
+  z.object({ type: z.literal("join"), name: z.string().max(200), color: avatarColorSchema.optional() }).strict(),
   z.object({ type: z.literal("rejoin"), token }).strict(),
   z.object({ type: z.literal("leave") }).strict(),
+  z.object({ type: z.literal("setReady"), ready: z.boolean() }).strict(),
+  z.object({ type: z.literal("setColor"), color: avatarColorSchema }).strict(),
+  // Host only. null clears the selection.
+  z.object({ type: z.literal("selectGame"), gameId: gameId.nullable() }).strict(),
 ]);
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
 
@@ -53,7 +64,9 @@ export type ClientMessage = z.infer<typeof clientMessageSchema>;
 export const lobbyPlayerSchema = z.object({
   id: z.string(),
   name: z.string(),
+  color: avatarColorSchema,
   isHost: z.boolean(),
+  ready: z.boolean(),
   connected: z.boolean(),
 });
 export type LobbyPlayer = z.infer<typeof lobbyPlayerSchema>;
@@ -61,6 +74,7 @@ export type LobbyPlayer = z.infer<typeof lobbyPlayerSchema>;
 export const lobbyStateSchema = z.object({
   code: z.string(),
   maxPlayers: z.number(),
+  selectedGameId: z.string().nullable(),
   players: z.array(lobbyPlayerSchema),
 });
 export type LobbyState = z.infer<typeof lobbyStateSchema>;
@@ -74,6 +88,9 @@ export const errorCodeSchema = z.enum([
   "already_joined",
   "bad_message",
   "rate_limited",
+  "not_host",
+  "unknown_game",
+  "color_taken",
 ]);
 export type ErrorCode = z.infer<typeof errorCodeSchema>;
 
