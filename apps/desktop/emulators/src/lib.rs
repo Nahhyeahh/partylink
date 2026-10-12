@@ -24,6 +24,9 @@ pub enum Emulator {
     /// repo's "Emulator files" workflow (RetroArch's own downloads are 7z files
     /// holding every core).
     RetroArch,
+    /// The Mario Party Netplay build of Mupen64Plus (RMG), for N64 games.
+    /// Netplay is only in its window; PartyLink sets it up and passes codes around.
+    MupenMpn,
 }
 
 impl Emulator {
@@ -31,6 +34,7 @@ impl Emulator {
         match id {
             "dolphin-mpn" => Some(Self::DolphinMpn),
             "retroarch" => Some(Self::RetroArch),
+            "mupen-mpn" => Some(Self::MupenMpn),
             _ => None,
         }
     }
@@ -39,6 +43,7 @@ impl Emulator {
         match self {
             Self::DolphinMpn => "dolphin-mpn",
             Self::RetroArch => "retroarch",
+            Self::MupenMpn => "mupen-mpn",
         }
     }
 
@@ -47,6 +52,7 @@ impl Emulator {
         match self {
             Self::DolphinMpn => "https://github.com/MarioPartyNetplay/Dolphin-MPN/releases/download",
             Self::RetroArch => "https://github.com/Nahhyeahh/partylink/releases/download",
+            Self::MupenMpn => "https://github.com/MarioPartyNetplay/Mupen-MPN/releases/download",
         }
     }
 
@@ -54,6 +60,7 @@ impl Emulator {
         match self {
             Self::DolphinMpn => "Dolphin-MPN.exe",
             Self::RetroArch => "retroarch.exe",
+            Self::MupenMpn => "Mupen-MPN.exe",
         }
     }
 }
@@ -311,7 +318,9 @@ pub fn prepare_dolphin_user_dir(user_dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
+mod mupen;
 mod retroarch;
+pub use mupen::*;
 pub use retroarch::*;
 
 #[cfg(test)]

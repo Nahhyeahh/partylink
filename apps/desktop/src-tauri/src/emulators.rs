@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -23,6 +23,8 @@ pub struct EmulatorState {
     installing: Mutex<HashSet<String>>,
     /// Emulators PartyLink started that are still open.
     running: Arc<Mutex<HashSet<String>>>,
+    /// The room code the host's Mupen-MPN printed, once it has made a room.
+    mupen_code: Arc<Mutex<Option<String>>>,
 }
 
 #[derive(Deserialize)]
@@ -184,8 +186,11 @@ pub fn launch_dolphin(
         }
     };
 
-    spawn_emulator(app, &state, &release, &root, "Dolphin", args)
+    spawn_emulator(app, &state, &release, &root, "Dolphin", args, None)
 }
+
+/// Called with each line an emulator prints to its error output.
+type LineHandler = Box<dyn Fn(&str) + Send>;
 
 /// Starts the emulator and sends "emulator-exited" when it closes.
 fn spawn_emulator(
@@ -195,19 +200,31 @@ fn spawn_emulator(
     root: &Path,
     name: &str,
     args: Vec<OsString>,
+    on_stderr_line: Option<LineHandler>,
 ) -> Result<(), String> {
     let id = release.emulator.id().to_string();
     if !state.running.lock().unwrap().insert(id.clone()) {
         return Err(format!("{name} is already open. Close it to start again."));
     }
-    let mut child = match Command::new(release.exe_path(root)).args(args).current_dir(release.install_dir(root)).spawn()
-    {
+    let mut command = Command::new(release.exe_path(root));
+    command.args(args).current_dir(release.install_dir(root));
+    if on_stderr_line.is_some() {
+        command.stderr(Stdio::piped());
+    }
+    let mut child = match command.spawn() {
         Ok(child) => child,
         Err(e) => {
             state.running.lock().unwrap().remove(&id);
             return Err(format!("Couldn't start {name}: {e}"));
         }
     };
+    if let (Some(handler), Some(stderr)) = (on_stderr_line, child.stderr.take()) {
+        std::thread::spawn(move || {
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                handler(&line);
+            }
+        });
+    }
     let running = state.running.clone();
     std::thread::spawn(move || {
         let _ = child.wait();
@@ -302,7 +319,7 @@ pub fn launch_retroarch(
         None => emu::retroarch_host_args(&install_dir, &user_dir, core, game_path),
         Some(room) => emu::retroarch_join_args(&install_dir, &user_dir, core, game_path, room),
     };
-    spawn_emulator(app, &state, &release, &root, "RetroArch", args)
+    spawn_emulator(app, &state, &release, &root, "RetroArch", args, None)
 }
 
 /// The host's relay room as `host|port|session`, once RetroArch has announced
@@ -322,4 +339,57 @@ pub async fn find_retroarch_room(nickname: String) -> Result<Option<String>, Str
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Opens Mupen-MPN for N64 games. Netplay happens in its Online Play window;
+/// PartyLink fills in the player's settings and picks up the host's room code.
+#[tauri::command]
+pub fn launch_mupen(
+    app: AppHandle,
+    state: State<'_, EmulatorState>,
+    release: ReleaseArg,
+    nickname: String,
+) -> Result<(), String> {
+    let release = release.parse()?;
+    if release.emulator != emu::Emulator::MupenMpn {
+        return Err("That isn't Mupen-MPN.".into());
+    }
+    let root = root(&app)?;
+    if !release.is_installed(&root) {
+        return Err("Mupen-MPN isn't installed yet.".into());
+    }
+    let folder = games_folder(&app).ok_or("Choose your games folder first.")?;
+    let user_dir = app.path().app_local_data_dir().map_err(|e| e.to_string())?.join("mupen-user");
+    emu::prepare_mupen(&release.install_dir(&root), &user_dir, folder.as_ref(), &nickname)
+        .map_err(|e| e.to_string())?;
+
+    *state.mupen_code.lock().unwrap() = None;
+    let code = state.mupen_code.clone();
+    let on_line = Box::new(move |line: &str| {
+        if let Some(found) = emu::parse_mupen_host_code(line) {
+            *code.lock().unwrap() = Some(found);
+        }
+    });
+    spawn_emulator(app, &state, &release, &root, "Mupen-MPN", emu::mupen_args(&user_dir), Some(on_line))
+}
+
+/// The host's Mupen-MPN room code: what Mupen printed when the room was
+/// made, or failing that, a code the host copied with Mupen's Copy button.
+#[tauri::command]
+pub fn read_mupen_room_code(app: AppHandle, state: State<'_, EmulatorState>) -> Option<String> {
+    if let Some(code) = state.mupen_code.lock().unwrap().clone() {
+        return Some(code);
+    }
+    let text = app.clipboard().read_text().ok()?;
+    let text = text.trim();
+    emu::is_mupen_host_code(text).then(|| text.to_ascii_uppercase())
+}
+
+/// Puts the host's room code on a friend's clipboard, ready to paste into Mupen-MPN.
+#[tauri::command]
+pub fn copy_mupen_room_code(app: AppHandle, code: String) -> Result<(), String> {
+    if !emu::is_mupen_host_code(&code) {
+        return Err("That isn't a Mupen-MPN room code.".into());
+    }
+    app.clipboard().write_text(code).map_err(|e| e.to_string())
 }

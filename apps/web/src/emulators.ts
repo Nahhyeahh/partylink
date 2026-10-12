@@ -5,7 +5,7 @@
 import type { GameSystem } from "@partylink/protocol";
 
 export interface EmulatorRelease {
-  emulator: "dolphin-mpn" | "retroarch";
+  emulator: "dolphin-mpn" | "retroarch" | "mupen-mpn";
   /** Shown to players. */
   name: string;
   tag: string;
@@ -38,12 +38,24 @@ export const RETROARCH: EmulatorRelease = {
   megabytes: 278,
 };
 
+/** The Mario Party Netplay build of Mupen64Plus, for N64: https://github.com/MarioPartyNetplay/Mupen-MPN */
+export const MUPEN: EmulatorRelease = {
+  emulator: "mupen-mpn",
+  name: "Mupen",
+  tag: "476e02b",
+  asset: "MupenMPN-windows-x86_64.zip",
+  sha256: "54d367e733f2d7b1411b076a7a9e7c99f068b1d517e8969897d371af03efb11d",
+  megabytes: 104,
+};
+
 /** The emulator for a console, or null if PartyLink can't start its games yet. */
 export function emulatorFor(system: GameSystem): EmulatorRelease | null {
   switch (system) {
     case "gc":
     case "wii":
       return DOLPHIN;
+    case "n64":
+      return MUPEN;
     case "ps1":
     case "snes":
     case "nes":
