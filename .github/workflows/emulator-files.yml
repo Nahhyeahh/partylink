@@ -54,8 +54,10 @@ jobs:
             dll=$(find cores -iname "${core}_libretro.dll" -print -quit)
             test -n "$dll" || { echo "Missing core $core"; exit 1; }
             cp "$dll" "$app/cores/"
-            info=$(find cores retroarch -iname "${core}_libretro.info" -print -quit || true)
-            if [ -n "$info" ]; then cp "$info" "$app/info/"; else echo "No .info for $core"; fi
+            if [ ! -f "$app/info/${core}_libretro.info" ]; then
+              info=$(find cores -iname "${core}_libretro.info" -print -quit || true)
+              if [ -n "$info" ]; then cp "$info" "$app/info/"; else echo "No .info for $core"; fi
+            fi
           done
           # Only the cores PartyLink uses.
           find "$app/cores" -name '*.dll' ! \( $(printf -- '-name %s_libretro.dll -o ' $CORES) -false \) -delete
