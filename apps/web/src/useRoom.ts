@@ -18,6 +18,9 @@ export interface RoomConnection {
   selectGame: (gameId: string | null) => void;
   selectOwnGame: (game: OwnGame | null) => void;
   setGameCopy: (sha1: string, copy: "match" | "missing" | "no-app") => void;
+  startOwnGame: () => void;
+  setRoomCode: (code: string) => void;
+  endOwnGame: () => void;
   leave: () => void;
 }
 
@@ -130,6 +133,9 @@ export function useRoom(code: string, name: string, color: AvatarColor): RoomCon
       (sha1: string, copy: "match" | "missing" | "no-app") => send({ type: "setGameCopy", sha1, copy }),
       [send],
     ),
+    startOwnGame: useCallback(() => send({ type: "startOwnGame" }), [send]),
+    setRoomCode: useCallback((code: string) => send({ type: "setRoomCode", code }), [send]),
+    endOwnGame: useCallback(() => send({ type: "endOwnGame" }), [send]),
     leave,
   };
 }

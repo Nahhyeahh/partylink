@@ -1,5 +1,5 @@
 import { canStart, canStartOwnGame, GAMES, getGame } from "@partylink/game-catalog";
-import type { AvatarColor, GameCopy } from "@partylink/protocol";
+import { type AvatarColor, type GameCopy, SYSTEM_NAMES } from "@partylink/protocol";
 import { useEffect, useState } from "react";
 import { inviteLink } from "../api";
 import { Avatar } from "../components/Avatar";
@@ -7,6 +7,8 @@ import { ColorPicker } from "../components/ColorPicker";
 import { GameCard } from "../components/GameCard";
 import { MyGames } from "../components/MyGames";
 import { OwnGameCard } from "../components/OwnGameCard";
+import { PlayPanel } from "../components/PlayPanel";
+import { emulatorFor } from "../emulators";
 import { type MyGamesState, useMyGames } from "../myGames";
 import { isDesktop } from "../desktop";
 import { savedColor } from "../storage";
@@ -61,7 +63,12 @@ export function Lobby({ code, name, color, onExit }: Props) {
   const isHost = me?.isHost ?? false;
   const game = lobby?.selectedGameId ? getGame(lobby.selectedGameId) : undefined;
   const ownGame = lobby?.selectedOwnGame ?? null;
-  const startCheck = ownGame ? canStartOwnGame(ownGame, lobby?.players ?? []) : canStart(game, lobby?.players ?? []);
+  const session = lobby?.session ?? null;
+  const startCheck = ownGame
+    ? emulatorFor(ownGame.system)
+      ? canStartOwnGame(ownGame, lobby?.players ?? [])
+      : { ok: false as const, reason: `Starting ${SYSTEM_NAMES[ownGame.system]} games arrives in a later update.` }
+    : canStart(game, lobby?.players ?? []);
 
   // Tell the room whether we have the host's chosen game. Answers again after
   // the folder is rescanned or changed, since the answer may change.
@@ -113,6 +120,17 @@ export function Lobby({ code, name, color, onExit }: Props) {
         <p className="notice" role="status">
           {notice}
         </p>
+      )}
+
+      {lobby && ownGame && session && playerId && (
+        <PlayPanel
+          lobby={lobby}
+          game={ownGame}
+          session={session}
+          playerId={playerId}
+          onRoomCode={room.setRoomCode}
+          onEnd={room.endOwnGame}
+        />
       )}
 
       <div className="lobby-grid">
@@ -225,14 +243,14 @@ export function Lobby({ code, name, color, onExit }: Props) {
 
           {isHost ? (
             <>
-              <button className="primary big" disabled={!startCheck.ok || ownGame !== null}>
-                Start game
+              <button
+                className="primary big"
+                disabled={!startCheck.ok || session !== null}
+                onClick={() => ownGame && room.startOwnGame()}
+              >
+                {session ? "Playing" : "Start game"}
               </button>
-              {!startCheck.ok ? (
-                <p className="muted small center">{startCheck.reason}</p>
-              ) : (
-                ownGame && <p className="muted small center">Everyone's set. Starting games from PartyLink arrives in the next update.</p>
-              )}
+              {!startCheck.ok && !session && <p className="muted small center">{startCheck.reason}</p>}
             </>
           ) : (
             <p className="muted small center">The host starts the game when everyone is ready.</p>

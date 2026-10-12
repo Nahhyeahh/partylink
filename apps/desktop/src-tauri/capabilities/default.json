@@ -1,10 +1,25 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "What the PartyLink web app may ask the desktop app to do: read the window's basics and scan the player's games folder.",
-  "windows": ["main"],
+  "description": "What the PartyLink web app may ask the desktop app to do: scan the player's games folder, and install and start emulators.",
+  "windows": [
+    "main"
+  ],
   "remote": {
-    "urls": ["https://partylink.adrianpaintaway.workers.dev/*"]
+    "urls": [
+      "https://partylink.adrianpaintaway.workers.dev/*"
+    ]
   },
-  "permissions": ["core:default", "allow-get-games-folder", "allow-choose-games-folder", "allow-scan-games"]
+  "permissions": [
+    "core:default",
+    "allow-get-games-folder",
+    "allow-choose-games-folder",
+    "allow-scan-games",
+    "allow-emulator-installed",
+    "allow-install-emulator",
+    "allow-needs-vc-runtime",
+    "allow-launch-dolphin",
+    "allow-emulator-running",
+    "allow-read-dolphin-room-code"
+  ]
 }

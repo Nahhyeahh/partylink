@@ -35,10 +35,40 @@ export interface ScanProgress {
   current: string;
 }
 
+export interface InstallProgress {
+  emulator: string;
+  phase: "download" | "unpack";
+  done: number;
+  total: number | null;
+}
+
+interface ReleaseArg {
+  emulator: string;
+  tag: string;
+  asset: string;
+  sha256: string;
+}
+
+const releaseArg = ({ emulator, tag, asset, sha256 }: ReleaseArg): ReleaseArg => ({ emulator, tag, asset, sha256 });
+
+export type DolphinLaunch = { mode: "host"; sha1: string } | { mode: "join"; code: string };
+
 export const desktop = {
   getGamesFolder: () => invoke<string | null>("get_games_folder"),
   chooseGamesFolder: () => invoke<string | null>("choose_games_folder"),
   scanGames: () => invoke<ScanResult>("scan_games"),
   onScanProgress: (handler: (progress: ScanProgress) => void) =>
     listen<ScanProgress>("games-scan-progress", (event) => handler(event.payload)),
+
+  emulatorInstalled: (release: ReleaseArg) => invoke<boolean>("emulator_installed", { release: releaseArg(release) }),
+  installEmulator: (release: ReleaseArg) => invoke<void>("install_emulator", { release: releaseArg(release) }),
+  onInstallProgress: (handler: (progress: InstallProgress) => void) =>
+    listen<InstallProgress>("emulator-install-progress", (event) => handler(event.payload)),
+  needsVcRuntime: () => invoke<boolean>("needs_vc_runtime"),
+  launchDolphin: (release: ReleaseArg, launch: DolphinLaunch, nickname: string) =>
+    invoke<void>("launch_dolphin", { release: releaseArg(release), launch, nickname }),
+  emulatorRunning: (emulator: string) => invoke<boolean>("emulator_running", { emulator }),
+  onEmulatorExited: (handler: (emulator: string) => void) =>
+    listen<string>("emulator-exited", (event) => handler(event.payload)),
+  readDolphinRoomCode: () => invoke<string | null>("read_dolphin_room_code"),
 };

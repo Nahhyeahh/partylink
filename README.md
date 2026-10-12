@@ -2,7 +2,7 @@
 
 Play your own console games online with friends who live in different places. Create a party, share the 4-letter code, pick a game from your games folder, and play together through emulator netplay.
 
-> **Status:** early development. You can create a party, have friends join by code or invite link, and pick avatar colours. In the Windows app you choose your games folder, PartyLink recognises your GameCube, Wii, N64, PlayStation, SNES, NES, Game Boy Advance and Mega Drive games, and the lobby checks that everyone has the same copy of the host's chosen game. Starting the game through the emulators comes next, beginning with GameCube and Wii.
+> **Status:** early development. You can create a party, have friends join by code or invite link, and pick avatar colours. In the Windows app you choose your games folder, PartyLink recognises your GameCube, Wii, N64, PlayStation, SNES, NES, Game Boy Advance and Mega Drive games, and the lobby checks that everyone has the same copy of the host's chosen game. GameCube and Wii games start through Dolphin with netplay; other consoles come next.
 >
 > PartyLink never includes or downloads games. Each player uses their own game files.
 
@@ -16,6 +16,7 @@ Play your own console games online with friends who live in different places. Cr
 | --- | --- | --- |
 | Web app | `apps/web` | React + TypeScript. The home screen, game library, lobby, and (later) games and phone controllers. |
 | Desktop app | `apps/desktop/src-tauri` | A Tauri 2 window around the hosted web app, built into a Windows installer by GitHub Actions. It adds what a browser can't do, like reading your games folder. |
+| Emulators | `apps/desktop/emulators` | Downloads emulators from their own projects' releases (checked against a pinned SHA-256) and builds the options that start netplay. Which release everyone uses is set in `apps/web/src/emulators.ts`. |
 | Game scanner | `apps/desktop/scanner` | Rust code that finds game files in a folder, works out each one's console, and fingerprints it (SHA-1) so the lobby can compare copies. |
 | Game names | `apps/web/public/gamedb` | Fingerprints of known clean game dumps, used to show proper names. Built by `scripts/build-gamedb.mjs`. |
 | Server | `apps/server` | A Cloudflare Worker plus one Durable Object per party, talking to players over WebSockets. It also serves the web app. |
@@ -54,11 +55,22 @@ Netplay only works when everyone's file is identical, so when the host picks a g
 
 To refresh the list of known games, run `node scripts/build-gamedb.mjs`.
 
+## Playing a game
+
+When everyone has the game and is ready, the host clicks **Start game**:
+
+1. Each player's app downloads the emulator the first time (GameCube and Wii use [Dolphin-MPN](https://github.com/MarioPartyNetplay/Dolphin-MPN), the Mario Party Netplay build of Dolphin, about 150 MB).
+2. The host's Dolphin opens with the game, hosting a netplay session. The host clicks **Copy** next to the room code in Dolphin's NetPlay window; PartyLink picks it up and sends it to everyone.
+3. Friends' Dolphin opens and joins on its own. When everyone is in Dolphin's player list, the host clicks **Start** there.
+
+Dolphin needs Microsoft's Visual C++ runtime; PartyLink checks for it and links the download if it's missing. An Xbox-style controller works as player 1 out of the box.
+
 ## Tests
 
 ```
 pnpm test               # fast unit tests
-cargo test --manifest-path apps/desktop/scanner/Cargo.toml   # the games folder scanner
+cargo test --manifest-path apps/desktop/scanner/Cargo.toml     # the games folder scanner
+cargo test --manifest-path apps/desktop/emulators/Cargo.toml   # emulator install and launch options
 pnpm build              # builds the web app
 pnpm test:integration   # starts the real server locally and connects real WebSocket clients
 pnpm test:e2e           # drives real browser windows against the real server (run `pnpm build` first)

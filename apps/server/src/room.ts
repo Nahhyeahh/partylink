@@ -22,6 +22,9 @@ import {
   selectGame,
   selectOwnGame,
   setGameCopy,
+  setRoomCode,
+  startOwnGame,
+  endOwnGame,
   setColor,
   setReady,
   toLobbyState,
@@ -168,6 +171,15 @@ export class Room extends DurableObject<Env> {
         break;
       case "setGameCopy":
         result = setGameCopy(this.lobby, attachment.playerId, msg.sha1, msg.copy);
+        break;
+      case "startOwnGame":
+        result = startOwnGame(this.lobby, attachment.playerId, now);
+        break;
+      case "setRoomCode":
+        result = setRoomCode(this.lobby, attachment.playerId, msg.code);
+        break;
+      case "endOwnGame":
+        result = endOwnGame(this.lobby, attachment.playerId);
         break;
     }
     if (!result.ok) {
