@@ -22,6 +22,14 @@ const CRASH_BASH: FakeGame = {
   sha1: "fce2d66a12d49ec50aa1b93e138da6c6f646eb16",
 };
 
+const MARIO_PARTY_2: FakeGame = {
+  path: "C:\\Games\\N64\\Mario Party 2 (USA).z64",
+  fileName: "Mario Party 2 (USA).z64",
+  system: "n64",
+  size: 33554432,
+  sha1: "1111111111111111111111111111111111111111",
+};
+
 // A compressed GameCube image: its fingerprint isn't in the known list, so it
 // is named from the disc id instead.
 const MARIO_PARTY_4: FakeGame = {
@@ -41,6 +49,8 @@ async function fakeDesktop(page: Page, folder: string | null, games: FakeGame[],
       let next = 1;
       let installed = false;
       let clipboard: string | null = "OLDCODE1";
+      // RetroArch's lobby list: a room from an earlier game until the host's opens.
+      let retroRoom: string | null = "relay.example.org|55435|OldSession==";
       const listeners: Record<string, number[]> = {};
       const w = window as unknown as Record<string, unknown>;
       const calls: { cmd: string; args: unknown }[] = [];
@@ -88,6 +98,12 @@ async function fakeDesktop(page: Page, folder: string | null, games: FakeGame[],
               return null;
             case "read_dolphin_room_code":
               return clipboard;
+            case "launch_retroarch":
+              if ((args.launch as { mode: string }).mode === "host")
+                setTimeout(() => (retroRoom = "relay.example.org|55435|NewSession=="), 500);
+              return null;
+            case "find_retroarch_room":
+              return retroRoom;
             default:
               throw new Error(`unexpected command ${cmd}`);
           }
@@ -98,15 +114,24 @@ async function fakeDesktop(page: Page, folder: string | null, games: FakeGame[],
   );
 }
 
-const launches = (page: Page) =>
-  page.evaluate(() =>
-    ((window as unknown as { __calls: { cmd: string; args: { launch: unknown; nickname: string } }[] }).__calls ?? [])
-      .filter((c) => c.cmd === "launch_dolphin")
-      .map((c) => ({ ...(c.args.launch as object), nickname: c.args.nickname })),
+const launches = (page: Page, cmd = "launch_dolphin") =>
+  page.evaluate(
+    (cmd) =>
+      (
+        (window as unknown as { __calls: { cmd: string; args: { launch: unknown; nickname: string; players?: number } }[] })
+          .__calls ?? []
+      )
+        .filter((c) => c.cmd === cmd)
+        .map((c) => ({
+          ...(c.args.launch as object),
+          nickname: c.args.nickname,
+          ...(c.args.players ? { players: c.args.players } : {}),
+        })),
+    cmd,
   );
 
-async function newPlayer(browser: Browser): Promise<Page> {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+async function newPlayer(browser: Browser, timezoneId = "Europe/London"): Promise<Page> {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, timezoneId });
   return context.newPage();
 }
 
@@ -176,17 +201,16 @@ test("the lobby checks everyone has the host's game", async ({ browser }) => {
 
   await browserFriend.getByRole("button", { name: "Leave party" }).click();
   await host.getByRole("button", { name: "I'm ready" }).click();
-  await friend.getByRole("button", { name: "I'm ready" }).click();
-  // Everyone has it, but PlayStation games can't be started yet, and the lobby says so.
-  await expect(host.getByText("Starting PlayStation games arrives in a later update.")).toBeVisible();
   await expect(host.getByRole("button", { name: "Start game" })).toBeDisabled();
+  await friend.getByRole("button", { name: "I'm ready" }).click();
+  await expect(host.getByRole("button", { name: "Start game" })).toBeEnabled();
 });
 
 test("starting a GameCube game opens Dolphin for everyone", async ({ browser }) => {
   const MP4_ISO: FakeGame = { ...MARIO_PARTY_4, sha1: "f4b287e3d1a9b05ea6cb5e573414f768370e1ed8", path: "C:\\Games\\mp4.iso" };
   const host = await newPlayer(browser);
   const friend = await newPlayer(browser);
-  await fakeDesktop(host, "C:\\Games", [MP4_ISO, CRASH_BASH]);
+  await fakeDesktop(host, "C:\\Games", [MP4_ISO, MARIO_PARTY_2]);
   await fakeDesktop(friend, "D:\\Roms", [MP4_ISO]);
 
   await host.goto("/");
@@ -198,10 +222,10 @@ test("starting a GameCube game opens Dolphin for everyone", async ({ browser }) 
   await friend.getByRole("button", { name: "Join", exact: true }).click();
   await expect(playerRow(host, "Sam")).toBeVisible();
 
-  // PlayStation games can be picked but not started yet.
+  // N64 games can be picked but not started yet.
   await host.getByRole("button", { name: "Choose" }).click();
-  await host.locator(".game-picker").getByRole("button", { name: /Crash Bash/ }).click();
-  await expect(host.getByText("Starting PlayStation games arrives in a later update.")).toBeVisible();
+  await host.locator(".game-picker").getByRole("button", { name: /Mario Party 2/ }).click();
+  await expect(host.getByText("Starting Nintendo 64 games arrives in a later update.")).toBeVisible();
 
   await host.getByRole("button", { name: "Change" }).click();
   await host.locator(".game-picker").getByRole("button", { name: /Mario Party 4/ }).click();
@@ -221,4 +245,43 @@ test("starting a GameCube game opens Dolphin for everyone", async ({ browser }) 
   await host.getByRole("button", { name: "End game" }).click();
   await expect(friend.getByRole("heading", { name: /Playing/ })).toHaveCount(0);
   await expect(host.getByRole("button", { name: "Start game" })).toBeDisabled();
+});
+
+test("starting a PS1 game opens RetroArch for everyone", async ({ browser }) => {
+  const host = await newPlayer(browser);
+  const friend = await newPlayer(browser, "America/Chicago");
+  await fakeDesktop(host, "C:\\Games", [CRASH_BASH]);
+  await fakeDesktop(friend, "D:\\Roms", [{ ...CRASH_BASH, path: "D:\\Roms\\crash.cue" }]);
+
+  await host.goto("/");
+  await host.getByLabel("Your name").fill("Adrian");
+  await host.getByRole("button", { name: "Create a party" }).click();
+  const code = (await host.locator(".room-code").textContent())?.trim() ?? "";
+  await friend.goto(`/?room=${code}`);
+  await friend.getByLabel("Your name").fill("Sam");
+  await friend.getByRole("button", { name: "Join", exact: true }).click();
+
+  await host.getByRole("button", { name: "Choose" }).click();
+  await host.locator(".game-picker").getByRole("button", { name: /Crash Bash/ }).click();
+  await expect(playerRow(host, "Sam")).toContainText("Has the game");
+  await host.getByRole("button", { name: "I'm ready" }).click();
+  await friend.getByRole("button", { name: "I'm ready" }).click();
+  await host.getByRole("button", { name: "Start game" }).click();
+
+  // The host's RetroArch opens and its new relay room (not the old one) reaches the friend.
+  await expect(friend.getByText("RetroArch is open and joining Adrian's game.")).toBeVisible();
+  await expect(host.getByText("Your friends' RetroArch is joining.", { exact: false })).toBeVisible();
+  const [hostLaunch] = await launches(host, "launch_retroarch");
+  expect(hostLaunch).toMatchObject({ mode: "host", sha1: CRASH_BASH.sha1, relay: "madrid", nickname: "Adrian", players: 2 });
+  const password = (hostLaunch as unknown as { password: string }).password;
+  expect(password).toMatch(/^[a-z0-9]{12}$/);
+  expect(await launches(friend, "launch_retroarch")).toEqual([
+    {
+      mode: "join",
+      sha1: CRASH_BASH.sha1,
+      code: `relay.example.org|55435|NewSession==|${password}`,
+      nickname: "Sam",
+      players: 2,
+    },
+  ]);
 });

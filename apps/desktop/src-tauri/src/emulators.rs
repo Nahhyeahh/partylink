@@ -8,9 +8,10 @@ use partylink_emulators::{self as emu, Release};
 use partylink_scanner::{ScanCache, System};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -59,7 +60,11 @@ pub fn emulator_installed(app: AppHandle, release: ReleaseArg) -> Result<bool, S
 
 /// Downloads and unpacks a release, sending "emulator-install-progress" events.
 #[tauri::command]
-pub async fn install_emulator(app: AppHandle, state: State<'_, EmulatorState>, release: ReleaseArg) -> Result<(), String> {
+pub async fn install_emulator(
+    app: AppHandle,
+    state: State<'_, EmulatorState>,
+    release: ReleaseArg,
+) -> Result<(), String> {
     let release = release.parse()?;
     let root = root(&app)?;
     if release.is_installed(&root) {
@@ -80,26 +85,23 @@ pub async fn install_emulator(app: AppHandle, state: State<'_, EmulatorState>, r
     result
 }
 
+fn http_agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .tls_config(ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build())
+        .timeout_connect(Some(Duration::from_secs(20)))
+        .build()
+        .into()
+}
+
 fn download_and_install(app: &AppHandle, release: &Release, root: &std::path::Path) -> Result<(), String> {
     let id = release.emulator.id();
     let downloads = root.join("downloads");
     std::fs::create_dir_all(&downloads).map_err(|e| e.to_string())?;
     let zip_path = downloads.join(&release.asset);
 
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .tls_config(ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build())
-        .timeout_connect(Some(Duration::from_secs(20)))
-        .build()
-        .into();
-    let response = agent
-        .get(&release.download_url())
-        .call()
-        .map_err(|e| format!("Couldn't download the emulator: {e}"))?;
-    let total = response
-        .headers()
-        .get("content-length")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse().ok());
+    let response =
+        http_agent().get(&release.download_url()).call().map_err(|e| format!("Couldn't download the emulator: {e}"))?;
+    let total = response.headers().get("content-length").and_then(|v| v.to_str().ok()).and_then(|v| v.parse().ok());
     let mut body = response.into_body().into_reader();
     let mut file = File::create(&zip_path).map_err(|e| e.to_string())?;
     let mut buf = vec![0u8; 1 << 16];
@@ -114,7 +116,8 @@ fn download_and_install(app: &AppHandle, release: &Release, root: &std::path::Pa
         done += n as u64;
         if last_event.elapsed() >= Duration::from_millis(200) {
             last_event = Instant::now();
-            let _ = app.emit("emulator-install-progress", InstallProgress { emulator: id, phase: "download", done, total });
+            let _ =
+                app.emit("emulator-install-progress", InstallProgress { emulator: id, phase: "download", done, total });
         }
     }
     drop(file);
@@ -167,8 +170,7 @@ pub fn launch_dolphin(
 
     let args = match launch {
         DolphinLaunch::Host { sha1 } => {
-            let cache = ScanCache::load(&scan_cache_path(&app)?);
-            let game = cache.find_by_sha1(&sha1).ok_or("That game isn't in your games folder any more. Try Rescan.")?;
+            let game = find_game(&app, &sha1)?;
             if !matches!(game.system, System::Gc | System::Wii) {
                 return Err("Dolphin only runs GameCube and Wii games.".into());
             }
@@ -182,15 +184,28 @@ pub fn launch_dolphin(
         }
     };
 
+    spawn_emulator(app, &state, &release, &root, "Dolphin", args)
+}
+
+/// Starts the emulator and sends "emulator-exited" when it closes.
+fn spawn_emulator(
+    app: AppHandle,
+    state: &EmulatorState,
+    release: &Release,
+    root: &Path,
+    name: &str,
+    args: Vec<OsString>,
+) -> Result<(), String> {
     let id = release.emulator.id().to_string();
     if !state.running.lock().unwrap().insert(id.clone()) {
-        return Err("Dolphin is already open. Close it to start again.".into());
+        return Err(format!("{name} is already open. Close it to start again."));
     }
-    let mut child = match Command::new(release.exe_path(&root)).args(args).current_dir(release.install_dir(&root)).spawn() {
+    let mut child = match Command::new(release.exe_path(root)).args(args).current_dir(release.install_dir(root)).spawn()
+    {
         Ok(child) => child,
         Err(e) => {
             state.running.lock().unwrap().remove(&id);
-            return Err(format!("Couldn't start Dolphin: {e}"));
+            return Err(format!("Couldn't start {name}: {e}"));
         }
     };
     let running = state.running.clone();
@@ -200,6 +215,11 @@ pub fn launch_dolphin(
         let _ = app.emit("emulator-exited", id);
     });
     Ok(())
+}
+
+fn find_game(app: &AppHandle, sha1: &str) -> Result<partylink_scanner::GameFile, String> {
+    let cache = ScanCache::load(&scan_cache_path(app)?);
+    cache.find_by_sha1(sha1).cloned().ok_or_else(|| "That game isn't in your games folder any more. Try Rescan.".into())
 }
 
 #[tauri::command]
@@ -214,4 +234,92 @@ pub fn read_dolphin_room_code(app: AppHandle) -> Option<String> {
     let text = app.clipboard().read_text().ok()?;
     let text = text.trim();
     emu::is_dolphin_host_code(text).then(|| text.to_string())
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "mode", rename_all = "camelCase")]
+pub enum RetroArchLaunch {
+    /// Open the game with this fingerprint and host it through a relay server.
+    Host { sha1: String, relay: String, password: String },
+    /// Open this player's copy of the game and join the host with their join code.
+    Join { sha1: String, code: String },
+}
+
+fn retroarch_core(system: System) -> Option<emu::Core> {
+    match system {
+        System::Ps1 => Some(emu::Core::PcsxRearmed),
+        System::Snes => Some(emu::Core::Snes9x),
+        System::Nes => Some(emu::Core::Fceumm),
+        System::Md => Some(emu::Core::GenesisPlusGx),
+        _ => None,
+    }
+}
+
+#[tauri::command]
+pub fn launch_retroarch(
+    app: AppHandle,
+    state: State<'_, EmulatorState>,
+    release: ReleaseArg,
+    launch: RetroArchLaunch,
+    nickname: String,
+    players: usize,
+) -> Result<(), String> {
+    let release = release.parse()?;
+    if release.emulator != emu::Emulator::RetroArch {
+        return Err("That isn't RetroArch.".into());
+    }
+    let root = root(&app)?;
+    if !release.is_installed(&root) {
+        return Err("RetroArch isn't installed yet.".into());
+    }
+    let install_dir = release.install_dir(&root);
+    let user_dir = app.path().app_local_data_dir().map_err(|e| e.to_string())?.join("retroarch-user");
+
+    let (sha1, relay, password, join) = match &launch {
+        RetroArchLaunch::Host { sha1, relay, password } => {
+            let relay = emu::Relay::from_id(relay).ok_or("Unknown relay server.")?;
+            (sha1, Some(relay), password.clone(), None)
+        }
+        RetroArchLaunch::Join { sha1, code } => {
+            let join = emu::JoinCode::parse(code).ok_or("That isn't a RetroArch join code.")?;
+            (sha1, None, join.password.clone(), Some(join.room))
+        }
+    };
+    let game = find_game(&app, sha1)?;
+    let core = retroarch_core(game.system).ok_or("PartyLink can't play that console's games with RetroArch.")?;
+    emu::prepare_retroarch_session(&emu::RetroSession {
+        install_dir: &install_dir,
+        user_dir: &user_dir,
+        nickname: &nickname,
+        password: &password,
+        players,
+        host_relay: relay,
+    })
+    .map_err(|e| e.to_string())?;
+
+    let game_path = Path::new(&game.path);
+    let args = match &join {
+        None => emu::retroarch_host_args(&install_dir, &user_dir, core, game_path),
+        Some(room) => emu::retroarch_join_args(&install_dir, &user_dir, core, game_path, room),
+    };
+    spawn_emulator(app, &state, &release, &root, "RetroArch", args)
+}
+
+/// The host's relay room as `host|port|session`, once RetroArch has announced
+/// it to libretro's lobby, or None while it hasn't yet. The web app adds the
+/// room password to make the join code it sends friends.
+#[tauri::command]
+pub async fn find_retroarch_room(nickname: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let body = http_agent()
+            .get("https://lobby.libretro.com/list/")
+            .call()
+            .map_err(|e| format!("Couldn't reach RetroArch's lobby: {e}"))?
+            .into_body()
+            .read_to_string()
+            .map_err(|e| e.to_string())?;
+        Ok(emu::find_relay_room(&body, &nickname).map(|r| format!("{}|{}|{}", r.host, r.port, r.session)))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

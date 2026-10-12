@@ -61,6 +61,15 @@ describe("client message parsing", () => {
     expect(parseClientMessage('{"type":"join","name":"Ada","color":"pink"}')).toEqual({ type: "join", name: "Ada", color: "pink" });
   });
 
+  it("accepts Dolphin and RetroArch room codes", () => {
+    for (const code of ["a1B2c3D4", "relay.example.org|55435|aBc+/9==|abcd1234"]) {
+      expect(parseClientMessage(JSON.stringify({ type: "setRoomCode", code }))).toEqual({ type: "setRoomCode", code });
+    }
+    for (const code of ["abc", "has space1", "x".repeat(201), "<script>1"]) {
+      expect(parseClientMessage(JSON.stringify({ type: "setRoomCode", code }))).toBeNull();
+    }
+  });
+
   it("rejects malformed input", () => {
     const bad = [
       "not json",
