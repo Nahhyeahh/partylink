@@ -58,14 +58,9 @@ Until they're set, the deploy step is skipped.
 
 ## Releasing the Windows app
 
-Push a version tag and GitHub Actions builds the installer and publishes a Release:
+On GitHub, open **Actions**, pick **Desktop app**, and click **Run workflow**. It builds the installer and publishes a Release named after the `version` in `apps/desktop/src-tauri/tauri.conf.json`. Pushing a version tag such as `v0.1.0` does the same.
 
-```
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-Bump `version` in `apps/desktop/src-tauri/tauri.conf.json` before tagging a new release. The desktop app loads the hosted web app, so most updates reach everyone without a new installer.
+Bump that `version` before publishing a new release. The desktop app loads the hosted web app, so most updates reach everyone without a new installer.
 
 ## License
 
