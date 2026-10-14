@@ -35,19 +35,19 @@ jobs:
           cat > user/session.cfg <<CFG
           config_save_on_exit = "false"
           pause_nonactive = "false"
-          netplay_nickname = "PLtest4821"
+          netplay_nickname = "PLdirect4821"
           netplay_password = "abcdEFGH1234"
           netplay_spectate_password = ""
           netplay_start_as_spectator = "false"
-          netplay_nat_traversal = "false"
+          netplay_nat_traversal = "true"
           netplay_public_announce = "true"
-          netplay_use_mitm_server = "true"
+          netplay_use_mitm_server = "false"
           netplay_mitm_server = "singapore"
           CFG
           (timeout 120 xvfb-run -a "$app" --verbose -L ./2048_libretro.so --config user/retroarch.cfg --appendconfig user/session.cfg -H > ra.log 2>&1 &) 
           for i in $(seq 1 10); do
             sleep 10
-            curl -fsS http://lobby.libretro.com/list/ | jq -c '.[] | .fields | select(.username | test("PLtest"))' || true
+            curl -fsS http://lobby.libretro.com/list/ | jq -c '.[] | .fields | select(.username | test("PLdirect"))' || true
           done
           grep -iE "netplay|mitm|announc|lobby|relay|error" ra.log | head -80 || true
           tail -40 ra.log
