@@ -209,7 +209,13 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
       ) : (
         <p>
           {!session.roomCode
-            ? `Waiting for ${hostName} to open the game in ${release.name}…`
+            ? `Waiting for ${hostName}'s room code. ${
+                retro
+                  ? `It arrives a few seconds after ${hostName}'s ${release.name} opens.`
+                  : mupen
+                    ? `It arrives once ${hostName} hosts the game from Online Play in ${release.name}.`
+                    : `It arrives once ${hostName} clicks Copy next to the room code in ${release.name}'s NetPlay window.`
+              }`
             : windowState === "open"
               ? retro
                 ? `${release.name} is open and joining ${hostName}'s game.`

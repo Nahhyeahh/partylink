@@ -118,7 +118,7 @@ fn str_field<'a>(fields: &'a Value, key: &str) -> &'a str {
     fields.get(key).and_then(Value::as_str).unwrap_or("")
 }
 
-/// Finds the host's room in libretro's lobby list (https://lobby.libretro.com/list/):
+/// Finds the host's room in libretro's lobby list (http://lobby.libretro.com/list/):
 /// the newest relayed, password-protected room under the host's nickname.
 pub fn find_relay_room(lobby_json: &str, nickname: &str) -> Option<RelayRoom> {
     let nickname = clean_nickname(nickname);

@@ -329,7 +329,8 @@ pub fn launch_retroarch(
 pub async fn find_retroarch_room(nickname: String) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let body = http_agent()
-            .get("https://lobby.libretro.com/list/")
+            // The lobby only answers plain http; its https address doesn't connect.
+            .get("http://lobby.libretro.com/list/")
             .call()
             .map_err(|e| format!("Couldn't reach RetroArch's lobby: {e}"))?
             .into_body()
