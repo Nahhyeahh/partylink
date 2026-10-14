@@ -14,3 +14,27 @@ jobs:
             curl -fsS -m 30 http://lobby.libretro.com/list/ | jq -c '.[] | .fields | select(.country=="au") | {id, username, game_name, core_name, retroarch_version, has_password, relayed: (.mitm_ip != ""), mitm_session_set: (.mitm_session != ""), port, connectable, host_method, created, updated}' || true
             sleep 20
           done
+  swap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Host direct, then relay, under one name
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq p7zip-full xvfb libfuse2 libjack-jackd2-0 libpulse0 libasound2t64 libegl1 libgl1 libgles2 libvulkan1 libxkbcommon0 libwayland-client0 libwayland-egl1 libxrandr2 libxi6 libxinerama1 libxxf86vm1 libsdl2-2.0-0 libudev1 libusb-1.0-0 libv4l-0 libfreetype6 libopenal1 libxv1 libdrm2 libgbm1 >/dev/null
+          curl -fsSL -o ra.7z https://buildbot.libretro.com/stable/1.22.2/linux/x86_64/RetroArch.7z
+          7z x -y ra.7z >/dev/null
+          app=$(find . -name '*.AppImage' | head -1); chmod +x "$app"
+          curl -fsSL -o core.zip https://buildbot.libretro.com/nightly/linux/x86_64/latest/2048_libretro.so.zip
+          unzip -o core.zip
+          mkdir -p user
+          printf 'video_driver = "null"\naudio_driver = "null"\ninput_driver = "null"\n' > user/retroarch.cfg
+          host() {
+            printf 'config_save_on_exit = "false"\npause_nonactive = "false"\nnetplay_nickname = "PLswap7319"\nnetplay_password = "%s"\nnetplay_nat_traversal = "%s"\nnetplay_public_announce = "true"\nnetplay_ip_port = "55435"\nnetplay_use_mitm_server = "%s"\nnetplay_mitm_server = "singapore"\n' "$1" "$2" "$3" > user/session.cfg
+            xvfb-run -a "$app" -L ./2048_libretro.so --config user/retroarch.cfg --appendconfig user/session.cfg -H > "ra-$2.log" 2>&1 &
+          }
+          show() { curl -fsS http://lobby.libretro.com/list/ | jq -c '.[] | .fields | select(.username=="PLswap7319") | {id, relayed: (.mitm_ip != ""), sess: (.mitm_session != ""), connectable, created, updated}' || true; }
+          host pw1 true false
+          for i in $(seq 1 5); do sleep 10; echo "direct $i"; show; done
+          pkill -9 -f AppImage || true; pkill -9 -f retroarch || true; pkill -9 Xvfb || true
+          echo killed; show
+          host pw2 false true
+          for i in $(seq 1 9); do sleep 10; echo "relay $i"; show; done
