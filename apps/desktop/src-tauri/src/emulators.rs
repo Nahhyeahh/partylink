@@ -7,12 +7,12 @@ use crate::games::{games_folder, scan_cache_path};
 use partylink_emulators::{self as emu, Release};
 use partylink_scanner::{ScanCache, System};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -21,8 +21,8 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 #[derive(Default)]
 pub struct EmulatorState {
     installing: Mutex<HashSet<String>>,
-    /// Emulators PartyLink started that are still open.
-    running: Arc<Mutex<HashSet<String>>>,
+    /// Emulators PartyLink started that are still open, so the app can close them.
+    running: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
     /// The room code the host's Mupen-MPN printed, once it has made a room.
     mupen_code: Arc<Mutex<Option<String>>>,
 }
@@ -203,7 +203,8 @@ fn spawn_emulator(
     on_stderr_line: Option<LineHandler>,
 ) -> Result<(), String> {
     let id = release.emulator.id().to_string();
-    if !state.running.lock().unwrap().insert(id.clone()) {
+    let mut running = state.running.lock().unwrap();
+    if running.contains_key(&id) {
         return Err(format!("{name} is already open. Close it to start again."));
     }
     let mut command = Command::new(release.exe_path(root));
@@ -211,13 +212,7 @@ fn spawn_emulator(
     if on_stderr_line.is_some() {
         command.stderr(Stdio::piped());
     }
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(e) => {
-            state.running.lock().unwrap().remove(&id);
-            return Err(format!("Couldn't start {name}: {e}"));
-        }
-    };
+    let mut child = command.spawn().map_err(|e| format!("Couldn't start {name}: {e}"))?;
     if let (Some(handler), Some(stderr)) = (on_stderr_line, child.stderr.take()) {
         std::thread::spawn(move || {
             for line in BufReader::new(stderr).lines().map_while(Result::ok) {
@@ -225,12 +220,38 @@ fn spawn_emulator(
             }
         });
     }
+    let child = Arc::new(Mutex::new(child));
+    running.insert(id.clone(), child.clone());
+    drop(running);
     let running = state.running.clone();
     std::thread::spawn(move || {
-        let _ = child.wait();
-        running.lock().unwrap().remove(&id);
-        let _ = app.emit("emulator-exited", id);
+        // Checked now and then rather than waited on, so close_emulator can take the lock.
+        while matches!(child.lock().unwrap().try_wait(), Ok(None)) {
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        // An emulator the app closed itself was already taken off the list,
+        // maybe with a new one opened in its place, and its exit isn't news.
+        let mut running = running.lock().unwrap();
+        if running.get(&id).is_some_and(|c| Arc::ptr_eq(c, &child)) {
+            running.remove(&id);
+            drop(running);
+            let _ = app.emit("emulator-exited", id);
+        }
     });
+    Ok(())
+}
+
+/// Closes an emulator PartyLink opened, such as the host's RetroArch when it
+/// has to reopen through a relay server.
+#[tauri::command]
+pub fn close_emulator(state: State<'_, EmulatorState>, emulator: String) -> Result<(), String> {
+    let child = state.running.lock().unwrap().remove(&emulator);
+    if let Some(child) = child {
+        let mut child = child.lock().unwrap();
+        // It may have closed on its own a moment ago.
+        let _ = child.kill();
+        let _ = child.wait();
+    }
     Ok(())
 }
 
@@ -241,7 +262,7 @@ fn find_game(app: &AppHandle, sha1: &str) -> Result<partylink_scanner::GameFile,
 
 #[tauri::command]
 pub fn emulator_running(state: State<'_, EmulatorState>, emulator: String) -> bool {
-    state.running.lock().unwrap().contains(&emulator)
+    state.running.lock().unwrap().contains_key(&emulator)
 }
 
 /// The host clicks Copy next to the room code in Dolphin; the web app polls
@@ -256,7 +277,8 @@ pub fn read_dolphin_room_code(app: AppHandle) -> Option<String> {
 #[derive(Deserialize)]
 #[serde(tag = "mode", rename_all = "camelCase")]
 pub enum RetroArchLaunch {
-    /// Open the game with this fingerprint and host it through a relay server.
+    /// Open the game with this fingerprint and host it, directly (`relay` is
+    /// `direct`) or through a relay server.
     Host { sha1: String, relay: String, password: String },
     /// Open this player's copy of the game and join the host with their join code.
     Join { sha1: String, code: String },
@@ -292,10 +314,10 @@ pub fn launch_retroarch(
     let install_dir = release.install_dir(&root);
     let user_dir = app.path().app_local_data_dir().map_err(|e| e.to_string())?.join("retroarch-user");
 
-    let (sha1, relay, password, join) = match &launch {
+    let (sha1, host, password, join) = match &launch {
         RetroArchLaunch::Host { sha1, relay, password } => {
-            let relay = emu::Relay::from_id(relay).ok_or("Unknown relay server.")?;
-            (sha1, Some(relay), password.clone(), None)
+            let via = emu::HostVia::from_id(relay).ok_or("Unknown relay server.")?;
+            (sha1, Some(via), password.clone(), None)
         }
         RetroArchLaunch::Join { sha1, code } => {
             let join = emu::JoinCode::parse(code).ok_or("That isn't a RetroArch join code.")?;
@@ -310,7 +332,7 @@ pub fn launch_retroarch(
         nickname: &nickname,
         password: &password,
         players,
-        host_relay: relay,
+        host,
     })
     .map_err(|e| e.to_string())?;
 
@@ -328,18 +350,52 @@ pub fn launch_retroarch(
 #[tauri::command]
 pub async fn find_retroarch_room(nickname: String) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let body = http_agent()
-            // The lobby only answers plain http; its https address doesn't connect.
-            .get("http://lobby.libretro.com/list/")
-            .call()
-            .map_err(|e| format!("Couldn't reach RetroArch's lobby: {e}"))?
-            .into_body()
-            .read_to_string()
-            .map_err(|e| e.to_string())?;
+        let body = read_lobby()?;
         Ok(emu::find_relay_room(&body, &nickname).map(|r| format!("{}|{}|{}", r.host, r.port, r.session)))
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// The host's room as libretro's lobby lists it, once RetroArch has announced it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LobbyRoomOut {
+    /// `host|port|session`, with an empty session for a direct room.
+    room: String,
+    direct: bool,
+    /// Whether the lobby could reach the room.
+    connectable: bool,
+    /// New each time a room opens, to tell a new room from an earlier game's.
+    id: u64,
+}
+
+/// Like find_retroarch_room, but also finds direct rooms and says whether
+/// friends can reach them.
+#[tauri::command]
+pub async fn find_retroarch_lobby_room(nickname: String) -> Result<Option<LobbyRoomOut>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let body = read_lobby()?;
+        Ok(emu::find_lobby_room(&body, &nickname).map(|found| LobbyRoomOut {
+            room: format!("{}|{}|{}", found.room.host, found.room.port, found.room.session),
+            direct: found.room.is_direct(),
+            connectable: found.connectable,
+            id: found.id,
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn read_lobby() -> Result<String, String> {
+    http_agent()
+        // The lobby only answers plain http; its https address doesn't connect.
+        .get("http://lobby.libretro.com/list/")
+        .call()
+        .map_err(|e| format!("Couldn't reach RetroArch's lobby: {e}"))?
+        .into_body()
+        .read_to_string()
+        .map_err(|e| e.to_string())
 }
 
 /// Opens Mupen-MPN for N64 games. Netplay happens in its Online Play window;

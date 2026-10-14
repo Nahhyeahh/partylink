@@ -11,11 +11,13 @@ export type EmulatorSetup =
   | { status: "ready" }
   | { status: "error"; message: string };
 
+export const NEEDS_NEWER_APP =
+  "This game needs a newer PartyLink. Download the latest version from the Releases page and install it.";
+
 export function errorText(error: unknown): string {
   const text = typeof error === "string" ? error : error instanceof Error ? error.message : "Something went wrong.";
   // An older app doesn't have the command this game needs.
-  if (/command \S+ (not found|not allowed)/i.test(text))
-    return "This game needs a newer PartyLink. Download the latest version from the Releases page and install it.";
+  if (/command \S+ (not found|not allowed)/i.test(text)) return NEEDS_NEWER_APP;
   return text;
 }
 

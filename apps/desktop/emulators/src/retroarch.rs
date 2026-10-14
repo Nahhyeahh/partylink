@@ -1,10 +1,11 @@
 // RetroArch ---------------------------------------------------------------------
 //
-// RetroArch runs PS1, SNES, NES and Mega Drive games through "cores". Netplay
-// goes through libretro's relay servers, so nobody needs to open router
-// ports. A relay session's ID is only published to libretro's lobby list, so
-// the host's room is announced there with a password only the party knows,
-// and the host's app reads the relay details back from the list.
+// RetroArch runs PS1, SNES, NES and Mega Drive games through "cores". The host
+// first tries a direct connection, opening a port on their router with UPnP,
+// which is fastest. If the lobby says friends can't reach it, the game goes
+// through one of libretro's relay servers instead. Either way the host's room
+// is announced to libretro's lobby list with a password only the party knows,
+// and the host's app reads the room's address back from the list.
 
 use crate::clean_nickname;
 use serde_json::Value;
@@ -64,25 +65,60 @@ impl Relay {
     }
 }
 
-/// Where friends connect to reach the host: a relay server and the host's session on it.
+/// How the host's RetroArch takes connections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostVia {
+    /// Friends connect straight to the host, through a port opened with UPnP.
+    Direct,
+    /// Everyone connects through a libretro relay server.
+    Relay(Relay),
+}
+
+impl HostVia {
+    /// `direct`, or a relay's id.
+    pub fn from_id(id: &str) -> Option<Self> {
+        if id == "direct" {
+            Some(Self::Direct)
+        } else {
+            Relay::from_id(id).map(Self::Relay)
+        }
+    }
+}
+
+/// Where friends connect to reach the host: either the host itself, or a
+/// relay server and the host's session on it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelayRoom {
     pub host: String,
     pub port: u16,
-    /// Base64, as RetroArch's `--mitm-session` expects.
+    /// Base64, as RetroArch's `--mitm-session` expects. Empty for a direct room.
     pub session: String,
 }
 
 impl RelayRoom {
+    pub fn is_direct(&self) -> bool {
+        self.session.is_empty()
+    }
+
     fn is_valid(&self) -> bool {
         !self.host.is_empty()
             && self.host.len() <= 64
             && self.host.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
             && self.port != 0
-            && !self.session.is_empty()
             && self.session.len() <= 64
             && self.session.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '='))
     }
+}
+
+/// The host's room as libretro's lobby lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LobbyRoom {
+    pub room: RelayRoom,
+    /// Whether the lobby could reach the room. A direct room it can't reach
+    /// is behind a router that didn't open the port.
+    pub connectable: bool,
+    /// The lobby's id for this announcement, new each time a room opens.
+    pub id: u64,
 }
 
 /// What the host's app sends friends: the relay room plus the room password.
@@ -118,8 +154,42 @@ fn str_field<'a>(fields: &'a Value, key: &str) -> &'a str {
     fields.get(key).and_then(Value::as_str).unwrap_or("")
 }
 
+fn port_field(fields: &Value, key: &str) -> Option<u16> {
+    fields.get(key).and_then(Value::as_u64).and_then(|p| u16::try_from(p).ok())
+}
+
 /// Finds the host's room in libretro's lobby list (http://lobby.libretro.com/list/):
-/// the newest relayed, password-protected room under the host's nickname.
+/// the newest password-protected room under the host's nickname, relayed or direct.
+pub fn find_lobby_room(lobby_json: &str, nickname: &str) -> Option<LobbyRoom> {
+    let nickname = clean_nickname(nickname);
+    let list: Vec<Value> = serde_json::from_str(lobby_json).ok()?;
+    list.iter()
+        .filter_map(|entry| entry.get("fields"))
+        .filter(|f| str_field(f, "username") == nickname)
+        .filter(|f| f.get("has_password").and_then(Value::as_bool) == Some(true))
+        .filter_map(|f| {
+            let room = if str_field(f, "mitm_ip").is_empty() {
+                RelayRoom { host: str_field(f, "ip").into(), port: port_field(f, "port")?, session: String::new() }
+            } else {
+                let session = str_field(f, "mitm_session");
+                if session.is_empty() {
+                    return None;
+                }
+                RelayRoom {
+                    host: str_field(f, "mitm_ip").into(),
+                    port: port_field(f, "mitm_port")?,
+                    session: session.into(),
+                }
+            };
+            let connectable = f.get("connectable").and_then(Value::as_bool).unwrap_or(false);
+            let id = f.get("id").and_then(Value::as_u64).unwrap_or(0);
+            room.is_valid().then(|| (str_field(f, "updated").to_string(), LobbyRoom { room, connectable, id }))
+        })
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, room)| room)
+}
+
+/// The newest relayed room under the host's nickname, for apps that only host through relays.
 pub fn find_relay_room(lobby_json: &str, nickname: &str) -> Option<RelayRoom> {
     let nickname = clean_nickname(nickname);
     let list: Vec<Value> = serde_json::from_str(lobby_json).ok()?;
@@ -128,10 +198,12 @@ pub fn find_relay_room(lobby_json: &str, nickname: &str) -> Option<RelayRoom> {
         .filter(|f| str_field(f, "username") == nickname)
         .filter(|f| f.get("has_password").and_then(Value::as_bool) == Some(true))
         .filter_map(|f| {
-            let port = f.get("mitm_port").and_then(Value::as_u64).and_then(|p| u16::try_from(p).ok())?;
-            let room =
-                RelayRoom { host: str_field(f, "mitm_ip").into(), port, session: str_field(f, "mitm_session").into() };
-            room.is_valid().then(|| (str_field(f, "updated").to_string(), room))
+            let room = RelayRoom {
+                host: str_field(f, "mitm_ip").into(),
+                port: port_field(f, "mitm_port")?,
+                session: str_field(f, "mitm_session").into(),
+            };
+            (room.is_valid() && !room.is_direct()).then(|| (str_field(f, "updated").to_string(), room))
         })
         .max_by(|a, b| a.0.cmp(&b.0))
         .map(|(_, room)| room)
@@ -147,8 +219,8 @@ pub struct RetroSession<'a> {
     pub password: &'a str,
     /// Players in the party, which decides whether a PS1 multitap is plugged in.
     pub players: usize,
-    /// Set for the host: the relay server to host through.
-    pub host_relay: Option<Relay>,
+    /// Set for the host: how friends reach it.
+    pub host: Option<HostVia>,
 }
 
 fn cfg_line(key: &str, value: impl std::fmt::Display) -> String {
@@ -164,6 +236,8 @@ fn path_str(path: &Path) -> String {
 const MAIN_CONFIG: &str = "retroarch.cfg";
 const SESSION_CONFIG: &str = "partylink-session.cfg";
 const CORE_OPTIONS: &str = "partylink-core-options.cfg";
+/// RetroArch's usual netplay port.
+const DEFAULT_PORT: u16 = 55435;
 
 /// Writes RetroArch's settings for one session into the player's RetroArch
 /// folder (separate from the install, so updating RetroArch keeps saves).
@@ -196,7 +270,11 @@ pub fn prepare_retroarch_session(session: &RetroSession) -> io::Result<()> {
         [cfg_line("pcsx_rearmed_bios", "HLE"), cfg_line("pcsx_rearmed_multitap", multitap)].concat(),
     )?;
 
-    let host = session.host_relay.is_some();
+    let host = session.host.is_some();
+    let relay = match session.host {
+        Some(HostVia::Relay(relay)) => Some(relay),
+        _ => None,
+    };
     let mut text = vec![
         // Don't fold this session's settings (like the password) into retroarch.cfg.
         cfg_line("config_save_on_exit", "false"),
@@ -212,12 +290,14 @@ pub fn prepare_retroarch_session(session: &RetroSession) -> io::Result<()> {
         cfg_line("netplay_password", session.password),
         cfg_line("netplay_spectate_password", ""),
         cfg_line("netplay_start_as_spectator", "false"),
-        cfg_line("netplay_nat_traversal", "false"),
-        // Only the host announces, so its app can read the relay session back.
+        // A direct host asks the router to open its port (UPnP).
+        cfg_line("netplay_nat_traversal", session.host == Some(HostVia::Direct)),
+        cfg_line("netplay_ip_port", DEFAULT_PORT),
+        // Only the host announces, so its app can read its room back.
         cfg_line("netplay_public_announce", host),
-        cfg_line("netplay_use_mitm_server", host),
+        cfg_line("netplay_use_mitm_server", relay.is_some()),
     ];
-    if let Some(relay) = session.host_relay {
+    if let Some(relay) = relay {
         text.push(cfg_line("netplay_mitm_server", relay.id()));
     }
     fs::write(user.join(SESSION_CONFIG), text.concat())
@@ -241,7 +321,7 @@ pub fn retroarch_host_args(install_dir: &Path, user_dir: &Path, core: Core, game
     args
 }
 
-/// Options to open the player's own copy of `game` and join the host's relay room.
+/// Options to open the player's own copy of `game` and join the host's room.
 pub fn retroarch_join_args(
     install_dir: &Path,
     user_dir: &Path,
@@ -250,15 +330,11 @@ pub fn retroarch_join_args(
     room: &RelayRoom,
 ) -> Vec<OsString> {
     let mut args = retroarch_common_args(install_dir, user_dir, core);
-    args.extend([
-        "-C".into(),
-        room.host.clone().into(),
-        "--port".into(),
-        room.port.to_string().into(),
-        "--mitm-session".into(),
-        room.session.clone().into(),
-        game.into(),
-    ]);
+    args.extend(["-C".into(), room.host.clone().into(), "--port".into(), room.port.to_string().into()]);
+    if !room.is_direct() {
+        args.extend(["--mitm-session".into(), room.session.clone().into()]);
+    }
+    args.push(game.into());
     args
 }
 

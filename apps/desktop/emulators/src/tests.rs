@@ -177,7 +177,33 @@ fn finds_the_hosts_newest_private_relay_room() {
 }
 
 #[test]
+fn finds_the_hosts_newest_room_direct_or_relayed() {
+    // The last entry above is a direct room, but it has no address.
+    let found = find_lobby_room(LOBBY, "Adrian").unwrap();
+    assert_eq!(found.room.session, "new+Session/B==");
+    assert!(!found.connectable);
+
+    let direct = r#"[
+      {"fields": {"id": 42, "username": "Adrian", "has_password": true, "ip": "203.0.113.5", "port": 55435, "mitm_ip": "",
+       "mitm_port": 0, "mitm_session": "", "connectable": true, "updated": "2026-10-14T10:00:00Z"}},
+      {"fields": {"username": "Adrian", "has_password": true, "ip": "203.0.113.5", "port": 55435,
+       "mitm_ip": "asia-southeast1.relay.retroarch.com", "mitm_port": 55435, "mitm_session": "rKtlnu1J",
+       "connectable": true, "updated": "2026-10-14T09:00:00Z"}}
+    ]"#;
+    let found = find_lobby_room(direct, "Adrian").unwrap();
+    assert_eq!(found.room, RelayRoom { host: "203.0.113.5".into(), port: 55435, session: String::new() });
+    assert!(found.room.is_direct() && found.connectable);
+    assert_eq!(found.id, 42);
+    // Apps that only know relays still get the relay room.
+    assert_eq!(find_relay_room(direct, "Adrian").unwrap().session, "rKtlnu1J");
+}
+
+#[test]
 fn join_codes_round_trip_and_reject_junk() {
+    let direct = JoinCode::parse("203.0.113.5|55435||abcd1234").unwrap();
+    assert!(direct.room.is_direct());
+    assert_eq!(direct.to_code(), "203.0.113.5|55435||abcd1234");
+
     let code = "relay.example.org|55435|new+Session/B==|abcd1234";
     let join = JoinCode::parse(code).unwrap();
     assert_eq!(join.room.port, 55435);
@@ -202,7 +228,7 @@ fn session<'a>(dirs: &'a TempDir, host: bool, players: usize) -> RetroSession<'a
         nickname: "Adrian",
         password: "abcd1234",
         players,
-        host_relay: host.then_some(Relay::Madrid),
+        host: host.then_some(HostVia::Relay(Relay::Madrid)),
     }
 }
 
@@ -213,6 +239,8 @@ fn writes_retroarch_settings_for_host_and_friends() {
     let host = fs::read_to_string(tmp.path().join("partylink-session.cfg")).unwrap();
     assert!(host.contains("netplay_public_announce = \"true\""));
     assert!(host.contains("netplay_mitm_server = \"madrid\""));
+    assert!(host.contains("netplay_use_mitm_server = \"true\""));
+    assert!(host.contains("netplay_nat_traversal = \"false\""));
     assert!(host.contains("netplay_password = \"abcd1234\""));
     assert!(host.contains("config_save_on_exit = \"false\""));
     let options = fs::read_to_string(tmp.path().join("partylink-core-options.cfg")).unwrap();
@@ -230,6 +258,15 @@ fn writes_retroarch_settings_for_host_and_friends() {
     fs::write(tmp.path().join("retroarch.cfg"), "mine").unwrap();
     prepare_retroarch_session(&session(&tmp, true, 2)).unwrap();
     assert_eq!(fs::read_to_string(tmp.path().join("retroarch.cfg")).unwrap(), "mine");
+
+    let mut direct = session(&tmp, true, 2);
+    direct.host = Some(HostVia::Direct);
+    prepare_retroarch_session(&direct).unwrap();
+    let direct = fs::read_to_string(tmp.path().join("partylink-session.cfg")).unwrap();
+    assert!(direct.contains("netplay_nat_traversal = \"true\""));
+    assert!(direct.contains("netplay_use_mitm_server = \"false\""));
+    assert!(direct.contains("netplay_public_announce = \"true\""));
+    assert!(!direct.contains("netplay_mitm_server ="));
 
     let mut bad = session(&tmp, true, 2);
     bad.password = "short";
@@ -253,6 +290,10 @@ fn builds_retroarch_host_and_join_options() {
         ["-C", "relay.example.org", "--port", "55435", "--mitm-session", "abc=", "/games/Crash Bash (USA).cue"]
     );
     assert!(!join.contains(&"-H".to_string()));
+
+    let direct = RelayRoom { host: "203.0.113.5".into(), port: 55435, session: String::new() };
+    let join = strings(&retroarch_join_args(install, user, Core::PcsxRearmed, game, &direct));
+    assert_eq!(&join[join.len() - 5..], ["-C", "203.0.113.5", "--port", "55435", "/games/Crash Bash (USA).cue"]);
 }
 
 #[test]
@@ -261,4 +302,6 @@ fn knows_the_relay_servers() {
         assert_eq!(Relay::from_id(id).unwrap().id(), id);
     }
     assert!(Relay::from_id("custom").is_none());
+    assert_eq!(HostVia::from_id("direct"), Some(HostVia::Direct));
+    assert_eq!(HostVia::from_id("nyc"), Some(HostVia::Relay(Relay::NewYork)));
 }

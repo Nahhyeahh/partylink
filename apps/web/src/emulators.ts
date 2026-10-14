@@ -68,6 +68,13 @@ export function emulatorFor(system: GameSystem): EmulatorRelease | null {
 
 export type Relay = "nyc" | "madrid" | "saopaulo" | "singapore";
 
+export const RELAY_NAMES: Record<Relay, string> = {
+  nyc: "New York",
+  madrid: "Madrid",
+  saopaulo: "São Paulo",
+  singapore: "Singapore",
+};
+
 /**
  * The libretro relay server nearest the host, guessed from the PC's time
  * zone. Every player's game traffic goes through it.
