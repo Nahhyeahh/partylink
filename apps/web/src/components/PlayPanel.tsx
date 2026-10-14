@@ -1,6 +1,6 @@
 import type { LobbyState, OwnGame, PlaySession } from "@partylink/protocol";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { desktop, isDesktop } from "../desktop";
+import { CLOSE_EMULATOR_VERSION, desktop, desktopIsAtLeast, isDesktop } from "../desktop";
 import { type EmulatorRelease, emulatorFor, nearestRelay, roomPassword, VC_RUNTIME_URL } from "../emulators";
 import { type EmulatorSetup, errorText, useEmulatorSetup } from "../emulatorSetup";
 
@@ -16,6 +16,9 @@ interface Props {
 }
 
 /** What each player sees while the party plays one of their own games. */
+// How long the host's RetroArch gets to list its relayed room before it's reopened.
+const RELAY_RETRY_MS = 20000;
+
 export function PlayPanel({ lobby, game, session, playerId, onRoomCode, onEnd }: Props) {
   const me = lobby.players.find((p) => p.id === playerId);
   const host = lobby.players.find((p) => p.isHost);
@@ -81,6 +84,10 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
   const password = useRef<{ startedAt: number; value: string } | null>(null);
   // True from opening the host's RetroArch until its new room has been shared.
   const awaitingRoom = useRef(false);
+  // When the host's RetroArch opened, and how many times it has reopened because
+  // the relay server didn't take its room.
+  const openedAt = useRef(0);
+  const [relayRetries, setRelayRetries] = useState(0);
 
   const launch = useCallback(
     async (mode: "host" | "join", code: string | null) => {
@@ -95,6 +102,7 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
             staleCode.current = await desktop.findRetroArchRoom(nickname).catch(() => null);
             const how = { mode, sha1: game.sha1, relay: nearestRelay(), password: password.current.value } as const;
             await desktop.launchRetroArch(release, how, nickname, players);
+            openedAt.current = Date.now();
             awaitingRoom.current = true;
           } else {
             await desktop.launchRetroArch(release, { mode, sha1: game.sha1, code: code ?? "" }, nickname, players);
@@ -157,7 +165,17 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
         if (retro) {
           if (!awaitingRoom.current || !password.current) return;
           const room = await desktop.findRetroArchRoom(nickname).catch(() => null);
-          if (!room || room === staleCode.current) return;
+          if (!room || room === staleCode.current) {
+            // RetroArch sometimes fails to reach the relay server and never retries,
+            // so reopen it (apps that can close it themselves only).
+            if (Date.now() - openedAt.current < RELAY_RETRY_MS || !awaitingRoom.current) return;
+            if (!(await desktopIsAtLeast(CLOSE_EMULATOR_VERSION))) return;
+            awaitingRoom.current = false;
+            setRelayRetries((n) => n + 1);
+            await desktop.closeEmulator(release.emulator).catch(() => {});
+            void launch("host", null);
+            return;
+          }
           const code = `${room}|${password.current.value}`;
           if (code !== sharedCode) {
             awaitingRoom.current = false;
@@ -171,7 +189,7 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
       retro ? 4000 : 1000,
     );
     return () => clearInterval(timer);
-  }, [isHost, retro, readCode, windowState, sharedCode, nickname, onRoomCode]);
+  }, [isHost, retro, readCode, windowState, sharedCode, nickname, onRoomCode, launch, release.emulator]);
 
   if (setup.status !== "ready") return <SetupMessage setup={setup} release={release} onRetry={retry} />;
 
@@ -184,7 +202,7 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
           {windowState === "opening" || windowState === "idle"
             ? `Opening ${release.name}…`
             : !session.roomCode
-              ? `${release.name} is open. Setting up the room for your friends…`
+              ? `${release.name} is open. Setting up the room for your friends…${relayRetries ? " The relay server didn't answer, so PartyLink is reopening it to try again." : ""}`
               : `Your friends' ${release.name} is joining. They drop into the game as they connect.`}
           {session.roomCode && (
             <>

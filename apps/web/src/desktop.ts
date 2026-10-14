@@ -83,6 +83,9 @@ export async function desktopIsAtLeast(version: string): Promise<boolean> {
 /** Desktop apps from this version on can host and join RetroArch games directly. */
 export const DIRECT_NETPLAY_VERSION = "0.3.3";
 
+/** Desktop apps from this version on can close an emulator they opened. */
+export const CLOSE_EMULATOR_VERSION = "0.3.3";
+
 export const desktop = {
   getGamesFolder: () => invoke<string | null>("get_games_folder"),
   chooseGamesFolder: () => invoke<string | null>("choose_games_folder"),

@@ -50,9 +50,16 @@ const MARIO_PARTY_4: FakeGame = {
   discRevision: 1,
 };
 
-async function fakeDesktop(page: Page, folder: string | null, games: FakeGame[], roomCode = "a1B2c3D4") {
+async function fakeDesktop(
+  page: Page,
+  folder: string | null,
+  games: FakeGame[],
+  roomCode = "a1B2c3D4",
+  { version = "0.3.4", relayFailsFirst = false } = {},
+) {
   await page.addInitScript(
-    ({ folder, games, roomCode }) => {
+    ({ folder, games, roomCode, version, relayFailsFirst }) => {
+      let hostLaunches = 0;
       let saved = folder;
       let next = 1;
       let installed = false;
@@ -109,9 +116,14 @@ async function fakeDesktop(page: Page, folder: string | null, games: FakeGame[],
             case "read_dolphin_room_code":
               return clipboard;
             case "launch_retroarch":
-              if ((args.launch as { mode: string }).mode === "host")
+              // The first try can fail to reach the relay server, leaving no relayed room.
+              if ((args.launch as { mode: string }).mode === "host" && !(relayFailsFirst && hostLaunches++ === 0))
                 setTimeout(() => (retroRoom = "relay.example.org|55435|NewSession=="), 500);
               return null;
+            case "close_emulator":
+              return null;
+            case "plugin:app|version":
+              return version;
             case "find_retroarch_room":
               return retroRoom;
             case "launch_mupen":
@@ -129,7 +141,7 @@ async function fakeDesktop(page: Page, folder: string | null, games: FakeGame[],
         },
       };
     },
-    { folder, games, roomCode },
+    { folder, games, roomCode, version, relayFailsFirst },
   );
 }
 
@@ -336,4 +348,35 @@ test("starting an N64 game opens Mupen and hands friends the room code", async (
   expect(await friend.evaluate(() => (window as unknown as { __clipboard: () => string }).__clipboard())).toBe("0A1B2C3");
   expect(await launches(host, "launch_mupen")).toEqual([{ nickname: "Adrian" }]);
   expect(await launches(friend, "launch_mupen")).toEqual([{ nickname: "Sam" }]);
+});
+
+test("the host's RetroArch reopens when the relay server doesn't take its room", async ({ browser }) => {
+  test.setTimeout(60000);
+  const host = await newPlayer(browser);
+  const friend = await newPlayer(browser, "America/Chicago");
+  await fakeDesktop(host, "C:\\Games", [CRASH_BASH], undefined, { relayFailsFirst: true });
+  await fakeDesktop(friend, "D:\\Roms", [{ ...CRASH_BASH, path: "D:\\Roms\\crash.cue" }]);
+
+  await host.goto("/");
+  await host.getByLabel("Your name").fill("Adrian");
+  await host.getByRole("button", { name: "Create a party" }).click();
+  const code = (await host.locator(".room-code").textContent())?.trim() ?? "";
+  await friend.goto(`/?room=${code}`);
+  await friend.getByLabel("Your name").fill("Sam");
+  await friend.getByRole("button", { name: "Join", exact: true }).click();
+
+  await host.getByRole("button", { name: "Choose" }).click();
+  await host.locator(".game-picker").getByRole("button", { name: /Crash Bash/ }).click();
+  await expect(playerRow(host, "Sam")).toContainText("Has the game");
+  await host.getByRole("button", { name: "I'm ready" }).click();
+  await friend.getByRole("button", { name: "I'm ready" }).click();
+  await host.getByRole("button", { name: "Start game" }).click();
+
+  await expect(friend.getByText("RetroArch is open and joining Adrian's game.", { exact: false })).toBeVisible({
+    timeout: 40000,
+  });
+  expect(await launches(host, "launch_retroarch")).toHaveLength(2);
+  expect(await launches(host, "close_emulator")).toHaveLength(1);
+  const [join] = await launches(friend, "launch_retroarch");
+  expect((join as unknown as { code: string }).code).toMatch(/^relay\.example\.org\|55435\|NewSession==\|/);
 });
