@@ -10,7 +10,10 @@ jobs:
     steps:
       - name: Lobby list format
         run: |
-          curl -fsS https://lobby.libretro.com/list/ -o list.json
+          curl -sS -m 20 -o /dev/null -w 'https: %{http_code}\n' https://lobby.libretro.com/list/ || echo "https failed"
+          curl -sS -m 20 -o /dev/null -w 'https www: %{http_code}\n' https://lobby.libretro.com/list || echo "https failed"
+          curl -fsS -m 30 -i http://lobby.libretro.com/list/ -o list.raw; head -c 600 list.raw; echo
+          curl -fsS -m 30 http://lobby.libretro.com/list/ -o list.json
           jq 'length' list.json
           jq '.[0]' list.json
           jq -r '.[] | .fields | [.username, .has_password, .mitm_ip, .mitm_port, .mitm_session, .host_method, .updated] | @tsv' list.json | head -20
@@ -44,7 +47,7 @@ jobs:
           (timeout 90 xvfb-run -a "$app" --verbose -L ./2048_libretro.so --config user/retroarch.cfg --appendconfig user/session.cfg -H > ra.log 2>&1 &) 
           for i in $(seq 1 8); do
             sleep 10
-            curl -fsS https://lobby.libretro.com/list/ | jq -c '.[] | .fields | select(.username | test("PLtest"))' || true
+            curl -fsS http://lobby.libretro.com/list/ | jq -c '.[] | .fields | select(.username | test("PLtest"))' || true
           done
           grep -iE "netplay|mitm|announc|lobby|relay|error" ra.log | head -80 || true
           tail -40 ra.log
