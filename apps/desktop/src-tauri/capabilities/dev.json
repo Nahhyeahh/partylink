@@ -18,6 +18,8 @@
     "allow-read-dolphin-room-code",
     "allow-launch-retroarch",
     "allow-find-retroarch-room",
+    "allow-find-retroarch-lobby-room",
+    "allow-close-emulator",
     "allow-launch-mupen",
     "allow-read-mupen-room-code",
     "allow-copy-mupen-room-code"
