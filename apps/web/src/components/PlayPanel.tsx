@@ -186,6 +186,13 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
             : !session.roomCode
               ? `${release.name} is open. Setting up the room for your friends…`
               : `Your friends' ${release.name} is joining. They drop into the game as they connect.`}
+          {session.roomCode && (
+            <>
+              {" "}
+              The room password is <code className="password">{session.roomCode.split("|")[3]}</code>. Your friends
+              type it when {release.name} asks.
+            </>
+          )}
         </p>
       ) : isHost ? (
         <HostSteps
@@ -208,9 +215,12 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
         </>
       ) : (
         <p>
-          {retro && session.roomCode && windowState !== "closed" ? (
+          {retro && session.roomCode ? (
             <>
-              {release.name} is {windowState === "open" ? "open and " : ""}joining {hostName}'s game. When it asks for
+              {windowState === "closed"
+                ? `${release.name} closed. `
+                : `${release.name} is ${windowState === "open" ? "open and " : ""}joining ${hostName}'s game. `}
+              When it asks for
               the netplay server password, type <code className="password">{session.roomCode.split("|")[3]}</code> and
               press Enter.
             </>

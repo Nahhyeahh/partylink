@@ -296,6 +296,7 @@ test("starting a PS1 game opens RetroArch for everyone", async ({ browser }) => 
   expect(password).toMatch(/^[a-z0-9]{8}$/);
   // RetroArch always asks joining players for the password, so they're shown it.
   await expect(friend.locator("code.password")).toHaveText(password);
+  await expect(host.locator("code.password")).toHaveText(password);
   expect(await launches(friend, "launch_retroarch")).toEqual([
     {
       mode: "join",
