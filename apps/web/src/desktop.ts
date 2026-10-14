@@ -73,7 +73,9 @@ export async function desktopIsAtLeast(version: string): Promise<boolean> {
   const have = (await getVersion().catch(() => "0")).split(".").map(Number);
   const want = version.split(".").map(Number);
   for (let i = 0; i < want.length; i++) {
-    if ((have[i] ?? 0) !== want[i]) return (have[i] ?? 0) > want[i];
+    const a = have[i] ?? 0;
+    const b = want[i] ?? 0;
+    if (a !== b) return a > b;
   }
   return true;
 }
