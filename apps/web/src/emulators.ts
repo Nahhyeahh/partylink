@@ -83,7 +83,7 @@ export function nearestRelay(timeZone = Intl.DateTimeFormat().resolvedOptions().
 
 /** A password for the host's RetroArch room, which only the party learns. */
 export function roomPassword(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
   return Array.from(bytes, (b) => "abcdefghijkmnpqrstuvwxyz23456789"[b % 32]).join("");
 }
 
