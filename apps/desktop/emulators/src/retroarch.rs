@@ -236,6 +236,9 @@ fn path_str(path: &Path) -> String {
 const MAIN_CONFIG: &str = "retroarch.cfg";
 const SESSION_CONFIG: &str = "partylink-session.cfg";
 const CORE_OPTIONS: &str = "partylink-core-options.cfg";
+/// Frames every player's input is held back by, and how many more RetroArch may add.
+const INPUT_LATENCY_FRAMES_MIN: u32 = 4;
+const INPUT_LATENCY_FRAMES_RANGE: u32 = 6;
 /// RetroArch's usual netplay port.
 const DEFAULT_PORT: u16 = 55435;
 
@@ -290,6 +293,11 @@ pub fn prepare_retroarch_session(session: &RetroSession) -> io::Result<()> {
         cfg_line("netplay_password", session.password),
         cfg_line("netplay_spectate_password", ""),
         cfg_line("netplay_start_as_spectator", "false"),
+        // Over a slow link (like Australia to the Singapore relay) RetroArch keeps
+        // rewinding to fix up late inputs, which makes the game stutter. Delaying
+        // everyone's input a few frames, and more when the link needs it, keeps it smooth.
+        cfg_line("netplay_input_latency_frames_min", INPUT_LATENCY_FRAMES_MIN),
+        cfg_line("netplay_input_latency_frames_range", INPUT_LATENCY_FRAMES_RANGE),
         // A direct host asks the router to open its port (UPnP).
         cfg_line("netplay_nat_traversal", session.host == Some(HostVia::Direct)),
         cfg_line("netplay_ip_port", DEFAULT_PORT),

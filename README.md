@@ -79,10 +79,9 @@ Mupen's settings and saves live in PartyLink's data folder (`mupen-user`).
 
 These run in [RetroArch](https://www.retroarch.com/) 1.22.2 with the PCSX ReARMed, Snes9x, FCEUmm and Genesis Plus GX cores. The "Emulator files" workflow (`.github/workflows/emulator-files.yml`) packs RetroArch and those cores from libretro's stable release into one zip and publishes it as the `retroarch-1.22.2` release here, so every player downloads the same files (about 280 MB, checked against the SHA-256 in `apps/web/src/emulators.ts`).
 
-1. The host's RetroArch opens with the game and hosts directly, asking the router to open its port (UPnP). That's the fastest connection.
-2. The room is listed on libretro's public lobby list with a password PartyLink makes for each game. The host's app reads the room's address back from the list, along with whether the lobby could reach it.
-3. If friends can't reach the host directly (the router didn't open the port), the host's RetroArch reopens through libretro's nearest relay server, picked from the PC's time zone. Relays add lag: there's none in Australia, for example, so games there go through Singapore.
-4. The app sends the room and password to the party. Friends' RetroArch opens their own copy of the game and joins, and RetroArch asks them for the password, which PartyLink shows them. Press F1 for RetroArch's menu.
+1. The host's RetroArch opens with the game and hosts through libretro's nearest relay server (picked from the PC's time zone), so nobody opens router ports. There's no relay in Australia, so games there go through Singapore; every player's input is held back a few frames so the game stays smooth over that distance.
+2. RetroArch only shares a relay session through libretro's public lobby list, so the room is listed there with a password PartyLink makes for each game. The host's app reads the room back from the list and sends the room and password to the party.
+3. Friends' RetroArch opens their own copy of the game and joins, and RetroArch asks them for the password, which PartyLink shows them. Press F1 for RetroArch's menu.
 
 Every player gets the same core settings: PS1 games use the built-in BIOS, and with 3 or more players a multitap is plugged in so games like Crash Bash take 4 players. RetroArch's settings and saves live in PartyLink's data folder (`retroarch-user`).
 
