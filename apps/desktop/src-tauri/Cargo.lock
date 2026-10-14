@@ -2465,7 +2465,7 @@ dependencies = [
 
 [[package]]
 name = "partylink"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "partylink-emulators",
  "partylink-scanner",
