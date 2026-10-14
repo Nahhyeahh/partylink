@@ -1,6 +1,5 @@
 name: Debug RetroArch lobby
-# Temporary: hosts a RetroArch netplay session the way PartyLink does and
-# checks whether it shows up in libretro's lobby list.
+# Temporary: lists Australian rooms in libretro's lobby (addresses hidden).
 on:
   push:
     branches: [debug-lobby]
@@ -8,47 +7,10 @@ jobs:
   lobby:
     runs-on: ubuntu-latest
     steps:
-      - name: Lobby list format
+      - name: Australian rooms
         run: |
-          curl -sS -m 20 -o /dev/null -w 'https: %{http_code}\n' https://lobby.libretro.com/list/ || echo "https failed"
-          curl -sS -m 20 -o /dev/null -w 'https www: %{http_code}\n' https://lobby.libretro.com/list || echo "https failed"
-          curl -fsS -m 30 -i http://lobby.libretro.com/list/ -o list.raw; head -c 600 list.raw; echo
-          curl -fsS -m 30 http://lobby.libretro.com/list/ -o list.json
-          jq 'length' list.json
-          jq '.[0]' list.json
-          jq -r '.[] | .fields | [.username, .has_password, .mitm_ip, .mitm_port, .mitm_session, .host_method, .updated] | @tsv' list.json | head -20
-      - name: Host like PartyLink
-        run: |
-          set -x
-          sudo apt-get update -qq && sudo apt-get install -y -qq p7zip-full xvfb libfuse2 libjack-jackd2-0 libpulse0 libasound2t64 libegl1 libgl1 libgles2 libvulkan1 libxkbcommon0 libwayland-client0 libwayland-egl1 libxrandr2 libxi6 libxinerama1 libxxf86vm1 libsdl2-2.0-0 libudev1 libusb-1.0-0 libv4l-0 libfreetype6 libopenal1 libxv1 libdrm2 libgbm1 >/dev/null
-          curl -fsSL -o ra.7z https://buildbot.libretro.com/stable/1.22.2/linux/x86_64/RetroArch.7z
-          7z x -y ra.7z >/dev/null
-          app=$(find . -name '*.AppImage' | head -1); chmod +x "$app"
-          curl -fsSL -o core.zip https://buildbot.libretro.com/nightly/linux/x86_64/latest/2048_libretro.so.zip
-          unzip -o core.zip
-          mkdir -p user
-          cat > user/retroarch.cfg <<CFG
-          video_driver = "null"
-          audio_driver = "null"
-          input_driver = "null"
-          CFG
-          cat > user/session.cfg <<CFG
-          config_save_on_exit = "false"
-          pause_nonactive = "false"
-          netplay_nickname = "PLdirect4821"
-          netplay_password = "abcdEFGH1234"
-          netplay_spectate_password = ""
-          netplay_start_as_spectator = "false"
-          netplay_nat_traversal = "true"
-          netplay_public_announce = "true"
-          netplay_use_mitm_server = "false"
-          netplay_mitm_server = "singapore"
-          CFG
-          (timeout 120 xvfb-run -a "$app" --verbose -L ./2048_libretro.so --config user/retroarch.cfg --appendconfig user/session.cfg -H > ra.log 2>&1 &) 
-          for i in $(seq 1 10); do
-            sleep 10
-            curl -fsS http://lobby.libretro.com/list/ | jq -c '.[] | .fields | select(.username | test("PLdirect"))' || true
+          for i in $(seq 1 12); do
+            date -u
+            curl -fsS -m 30 http://lobby.libretro.com/list/ | jq -c '.[] | .fields | select(.country=="au") | {id, username, game_name, core_name, retroarch_version, has_password, relayed: (.mitm_ip != ""), mitm_session_set: (.mitm_session != ""), port, connectable, host_method, created, updated}' || true
+            sleep 20
           done
-          grep -iE "netplay|mitm|announc|lobby|relay|error" ra.log | head -80 || true
-          tail -40 ra.log
-          curl -sS -m 20 -o /dev/null -w "https again: %{http_code}\n" https://lobby.libretro.com/list/ || echo "https failed again"
