@@ -288,12 +288,14 @@ test("starting a PS1 game opens RetroArch for everyone", async ({ browser }) => 
   await host.getByRole("button", { name: "Start game" }).click();
 
   // The host's RetroArch opens and its new relay room (not the old one) reaches the friend.
-  await expect(friend.getByText("RetroArch is open and joining Adrian's game.")).toBeVisible();
+  await expect(friend.getByText("RetroArch is open and joining Adrian's game.", { exact: false })).toBeVisible();
   await expect(host.getByText("Your friends' RetroArch is joining.", { exact: false })).toBeVisible();
   const [hostLaunch] = await launches(host, "launch_retroarch");
   expect(hostLaunch).toMatchObject({ mode: "host", sha1: CRASH_BASH.sha1, relay: "madrid", nickname: "Adrian", players: 2 });
   const password = (hostLaunch as unknown as { password: string }).password;
-  expect(password).toMatch(/^[a-z0-9]{12}$/);
+  expect(password).toMatch(/^[a-z0-9]{8}$/);
+  // RetroArch always asks joining players for the password, so they're shown it.
+  await expect(friend.locator("code.password")).toHaveText(password);
   expect(await launches(friend, "launch_retroarch")).toEqual([
     {
       mode: "join",

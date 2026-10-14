@@ -208,7 +208,13 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
         </>
       ) : (
         <p>
-          {!session.roomCode
+          {retro && session.roomCode && windowState !== "closed" ? (
+            <>
+              {release.name} is {windowState === "open" ? "open and " : ""}joining {hostName}'s game. When it asks for
+              the netplay server password, type <code className="password">{session.roomCode.split("|")[3]}</code> and
+              press Enter.
+            </>
+          ) : !session.roomCode
             ? `Waiting for ${hostName}'s room code. ${
                 retro
                   ? `It arrives a few seconds after ${hostName}'s ${release.name} opens.`
