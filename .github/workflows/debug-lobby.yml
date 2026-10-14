@@ -20,7 +20,7 @@ jobs:
       - name: Host like PartyLink
         run: |
           set -x
-          sudo apt-get update -qq && sudo apt-get install -y -qq p7zip-full xvfb libfuse2 >/dev/null
+          sudo apt-get update -qq && sudo apt-get install -y -qq p7zip-full xvfb libfuse2 libjack-jackd2-0 libpulse0 libasound2t64 >/dev/null
           curl -fsSL -o ra.7z https://buildbot.libretro.com/stable/1.22.2/linux/x86_64/RetroArch.7z
           7z x -y ra.7z >/dev/null
           app=$(find . -name '*.AppImage' | head -1); chmod +x "$app"
@@ -44,10 +44,11 @@ jobs:
           netplay_use_mitm_server = "true"
           netplay_mitm_server = "singapore"
           CFG
-          (timeout 90 xvfb-run -a "$app" --verbose -L ./2048_libretro.so --config user/retroarch.cfg --appendconfig user/session.cfg -H > ra.log 2>&1 &) 
-          for i in $(seq 1 8); do
+          (timeout 120 xvfb-run -a "$app" --verbose -L ./2048_libretro.so --config user/retroarch.cfg --appendconfig user/session.cfg -H > ra.log 2>&1 &) 
+          for i in $(seq 1 10); do
             sleep 10
             curl -fsS http://lobby.libretro.com/list/ | jq -c '.[] | .fields | select(.username | test("PLtest"))' || true
           done
           grep -iE "netplay|mitm|announc|lobby|relay|error" ra.log | head -80 || true
           tail -40 ra.log
+          curl -sS -m 20 -o /dev/null -w "https again: %{http_code}\n" https://lobby.libretro.com/list/ || echo "https failed again"
