@@ -1,0 +1,50 @@
+name: Debug RetroArch lobby
+# Temporary: hosts a RetroArch netplay session the way PartyLink does and
+# checks whether it shows up in libretro's lobby list.
+on:
+  push:
+    branches: [debug-lobby]
+jobs:
+  lobby:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Lobby list format
+        run: |
+          curl -fsS https://lobby.libretro.com/list/ -o list.json
+          jq 'length' list.json
+          jq '.[0]' list.json
+          jq -r '.[] | .fields | [.username, .has_password, .mitm_ip, .mitm_port, .mitm_session, .host_method, .updated] | @tsv' list.json | head -20
+      - name: Host like PartyLink
+        run: |
+          set -x
+          sudo apt-get update -qq && sudo apt-get install -y -qq p7zip-full xvfb libfuse2 >/dev/null
+          curl -fsSL -o ra.7z https://buildbot.libretro.com/stable/1.22.2/linux/x86_64/RetroArch.7z
+          7z x -y ra.7z >/dev/null
+          app=$(find . -name '*.AppImage' | head -1); chmod +x "$app"
+          curl -fsSL -o core.zip https://buildbot.libretro.com/nightly/linux/x86_64/latest/2048_libretro.so.zip
+          unzip -o core.zip
+          mkdir -p user
+          cat > user/retroarch.cfg <<CFG
+          video_driver = "null"
+          audio_driver = "null"
+          input_driver = "null"
+          CFG
+          cat > user/session.cfg <<CFG
+          config_save_on_exit = "false"
+          pause_nonactive = "false"
+          netplay_nickname = "PLtest4821"
+          netplay_password = "abcdEFGH1234"
+          netplay_spectate_password = ""
+          netplay_start_as_spectator = "false"
+          netplay_nat_traversal = "false"
+          netplay_public_announce = "true"
+          netplay_use_mitm_server = "true"
+          netplay_mitm_server = "singapore"
+          CFG
+          (timeout 90 xvfb-run -a "$app" --verbose -L ./2048_libretro.so --config user/retroarch.cfg --appendconfig user/session.cfg -H > ra.log 2>&1 &) 
+          for i in $(seq 1 8); do
+            sleep 10
+            curl -fsS https://lobby.libretro.com/list/ | jq -c '.[] | .fields | select(.username | test("PLtest"))' || true
+          done
+          grep -iE "netplay|mitm|announc|lobby|relay|error" ra.log | head -80 || true
+          tail -40 ra.log
