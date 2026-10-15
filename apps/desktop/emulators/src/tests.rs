@@ -242,6 +242,8 @@ fn writes_retroarch_settings_for_host_and_friends() {
     assert!(host.contains("netplay_use_mitm_server = \"true\""));
     assert!(host.contains("netplay_nat_traversal = \"false\""));
     assert!(host.contains("netplay_password = \"abcd1234\""));
+    assert!(host.contains("netplay_input_latency_frames_min = \"4\""));
+    assert!(host.contains("netplay_input_latency_frames_range = \"6\""));
     assert!(host.contains("config_save_on_exit = \"false\""));
     let options = fs::read_to_string(tmp.path().join("partylink-core-options.cfg")).unwrap();
     assert!(options.contains("pcsx_rearmed_multitap = \"port 1\""));

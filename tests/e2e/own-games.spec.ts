@@ -50,29 +50,22 @@ const MARIO_PARTY_4: FakeGame = {
   discRevision: 1,
 };
 
-interface FakeOptions {
-  roomCode?: string;
-  /** The desktop app's version. */
-  version?: string;
-  /** Whether friends can reach the host's RetroArch directly. */
-  directWorks?: boolean;
-}
-
 async function fakeDesktop(
   page: Page,
   folder: string | null,
   games: FakeGame[],
-  { roomCode = "a1B2c3D4", version = "0.3.2", directWorks = true }: FakeOptions = {},
+  roomCode = "a1B2c3D4",
+  { version = "0.3.4", relayFailsFirst = false } = {},
 ) {
   await page.addInitScript(
-    ({ folder, games, roomCode, version, directWorks }) => {
+    ({ folder, games, roomCode, version, relayFailsFirst }) => {
+      let hostLaunches = 0;
       let saved = folder;
       let next = 1;
       let installed = false;
       let clipboard: string | null = "OLDCODE1";
       // RetroArch's lobby list: a room from an earlier game until the host's opens.
       let retroRoom: string | null = "relay.example.org|55435|OldSession==";
-      let lobbyRoom = { room: "relay.example.org|55435|OldSession==", direct: false, connectable: true, id: 1 };
       let mupenCode: string | null = null;
       const listeners: Record<string, number[]> = {};
       const w = window as unknown as Record<string, unknown>;
@@ -122,26 +115,17 @@ async function fakeDesktop(
               return null;
             case "read_dolphin_room_code":
               return clipboard;
-            case "plugin:app|version":
-              return version;
-            case "launch_retroarch": {
-              const launch = args.launch as { mode: string; relay?: string };
-              if (launch.mode === "host")
-                setTimeout(() => {
-                  retroRoom = "relay.example.org|55435|NewSession==";
-                  lobbyRoom =
-                    launch.relay === "direct"
-                      ? { room: "203.0.113.5|55435|", direct: true, connectable: directWorks, id: 2 }
-                      : { room: retroRoom, direct: false, connectable: true, id: 3 };
-                }, 500);
+            case "launch_retroarch":
+              // The first try can fail to reach the relay server, leaving no relayed room.
+              if ((args.launch as { mode: string }).mode === "host" && !(relayFailsFirst && hostLaunches++ === 0))
+                setTimeout(() => (retroRoom = "relay.example.org|55435|NewSession=="), 500);
               return null;
-            }
-            case "find_retroarch_room":
-              return retroRoom;
-            case "find_retroarch_lobby_room":
-              return lobbyRoom;
             case "close_emulator":
               return null;
+            case "plugin:app|version":
+              return version;
+            case "find_retroarch_room":
+              return retroRoom;
             case "launch_mupen":
               // The host makes a room in Mupen's window; Mupen prints its code.
               setTimeout(() => (mupenCode = "0A1B2C3"), 500);
@@ -157,7 +141,7 @@ async function fakeDesktop(
         },
       };
     },
-    { folder, games, roomCode, version, directWorks },
+    { folder, games, roomCode, version, relayFailsFirst },
   );
 }
 
@@ -336,69 +320,6 @@ test("starting a PS1 game opens RetroArch for everyone", async ({ browser }) => 
   ]);
 });
 
-async function startCrashBash(host: Page, friend: Page) {
-  await host.goto("/");
-  await host.getByLabel("Your name").fill("Adrian");
-  await host.getByRole("button", { name: "Create a party" }).click();
-  const code = (await host.locator(".room-code").textContent())?.trim() ?? "";
-  await friend.goto(`/?room=${code}`);
-  await friend.getByLabel("Your name").fill("Sam");
-  await friend.getByRole("button", { name: "Join", exact: true }).click();
-  await host.getByRole("button", { name: "Choose" }).click();
-  await host.locator(".game-picker").getByRole("button", { name: /Crash Bash/ }).click();
-  await expect(playerRow(host, "Sam")).toContainText("Has the game");
-  await host.getByRole("button", { name: "I'm ready" }).click();
-  await friend.getByRole("button", { name: "I'm ready" }).click();
-  await host.getByRole("button", { name: "Start game" }).click();
-}
-
-test("a newer app hosts RetroArch games directly when friends can reach it", async ({ browser }) => {
-  const host = await newPlayer(browser, "Australia/Sydney");
-  const friend = await newPlayer(browser, "Australia/Melbourne");
-  await fakeDesktop(host, "C:\\Games", [CRASH_BASH], { version: "0.3.3" });
-  await fakeDesktop(friend, "D:\\Roms", [{ ...CRASH_BASH, path: "D:\\Roms\\crash.cue" }], { version: "0.3.3" });
-  await startCrashBash(host, friend);
-
-  await expect(friend.getByText("RetroArch is open and joining Adrian's game.", { exact: false })).toBeVisible();
-  const [hostLaunch] = await launches(host, "launch_retroarch");
-  expect(hostLaunch).toMatchObject({ mode: "host", relay: "direct" });
-  const password = (hostLaunch as unknown as { password: string }).password;
-  expect(await launches(friend, "launch_retroarch")).toMatchObject([
-    { mode: "join", code: `203.0.113.5|55435||${password}` },
-  ]);
-});
-
-test("the host falls back to a relay when friends can't reach it directly", async ({ browser }) => {
-  test.setTimeout(60_000);
-  const host = await newPlayer(browser, "Australia/Sydney");
-  const friend = await newPlayer(browser, "Australia/Melbourne");
-  await fakeDesktop(host, "C:\\Games", [CRASH_BASH], { version: "0.3.3", directWorks: false });
-  await fakeDesktop(friend, "D:\\Roms", [{ ...CRASH_BASH, path: "D:\\Roms\\crash.cue" }], { version: "0.3.3" });
-  await startCrashBash(host, friend);
-
-  await expect(host.getByText("goes through the Singapore relay server", { exact: false })).toBeVisible({
-    timeout: 30_000,
-  });
-  await expect(friend.getByText("RetroArch is open and joining Adrian's game.", { exact: false })).toBeVisible();
-  const hostLaunches = await launches(host, "launch_retroarch");
-  expect(hostLaunches.map((l) => (l as unknown as { relay: string }).relay)).toEqual(["direct", "singapore"]);
-  const password = (hostLaunches[1] as unknown as { password: string }).password;
-  expect(await launches(friend, "launch_retroarch")).toMatchObject([
-    { mode: "join", code: `relay.example.org|55435|NewSession==|${password}` },
-  ]);
-});
-
-test("an older app can't join a direct RetroArch game", async ({ browser }) => {
-  const host = await newPlayer(browser, "Australia/Sydney");
-  const friend = await newPlayer(browser, "Australia/Melbourne");
-  await fakeDesktop(host, "C:\\Games", [CRASH_BASH], { version: "0.3.3" });
-  await fakeDesktop(friend, "D:\\Roms", [{ ...CRASH_BASH, path: "D:\\Roms\\crash.cue" }], { version: "0.3.2" });
-  await startCrashBash(host, friend);
-
-  await expect(friend.getByText("This game needs a newer PartyLink.", { exact: false })).toBeVisible();
-  expect(await launches(friend, "launch_retroarch")).toEqual([]);
-});
-
 test("starting an N64 game opens Mupen and hands friends the room code", async ({ browser }) => {
   const host = await newPlayer(browser);
   const friend = await newPlayer(browser);
@@ -427,4 +348,35 @@ test("starting an N64 game opens Mupen and hands friends the room code", async (
   expect(await friend.evaluate(() => (window as unknown as { __clipboard: () => string }).__clipboard())).toBe("0A1B2C3");
   expect(await launches(host, "launch_mupen")).toEqual([{ nickname: "Adrian" }]);
   expect(await launches(friend, "launch_mupen")).toEqual([{ nickname: "Sam" }]);
+});
+
+test("the host's RetroArch reopens when the relay server doesn't take its room", async ({ browser }) => {
+  test.setTimeout(60000);
+  const host = await newPlayer(browser);
+  const friend = await newPlayer(browser, "America/Chicago");
+  await fakeDesktop(host, "C:\\Games", [CRASH_BASH], undefined, { relayFailsFirst: true });
+  await fakeDesktop(friend, "D:\\Roms", [{ ...CRASH_BASH, path: "D:\\Roms\\crash.cue" }]);
+
+  await host.goto("/");
+  await host.getByLabel("Your name").fill("Adrian");
+  await host.getByRole("button", { name: "Create a party" }).click();
+  const code = (await host.locator(".room-code").textContent())?.trim() ?? "";
+  await friend.goto(`/?room=${code}`);
+  await friend.getByLabel("Your name").fill("Sam");
+  await friend.getByRole("button", { name: "Join", exact: true }).click();
+
+  await host.getByRole("button", { name: "Choose" }).click();
+  await host.locator(".game-picker").getByRole("button", { name: /Crash Bash/ }).click();
+  await expect(playerRow(host, "Sam")).toContainText("Has the game");
+  await host.getByRole("button", { name: "I'm ready" }).click();
+  await friend.getByRole("button", { name: "I'm ready" }).click();
+  await host.getByRole("button", { name: "Start game" }).click();
+
+  await expect(friend.getByText("RetroArch is open and joining Adrian's game.", { exact: false })).toBeVisible({
+    timeout: 40000,
+  });
+  expect(await launches(host, "launch_retroarch")).toHaveLength(2);
+  expect(await launches(host, "close_emulator")).toHaveLength(1);
+  const [join] = await launches(friend, "launch_retroarch");
+  expect((join as unknown as { code: string }).code).toMatch(/^relay\.example\.org\|55435\|NewSession==\|/);
 });

@@ -1,16 +1,8 @@
 import type { LobbyState, OwnGame, PlaySession } from "@partylink/protocol";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { DIRECT_NETPLAY_VERSION, desktop, desktopIsAtLeast, isDesktop } from "../desktop";
-import {
-  type EmulatorRelease,
-  emulatorFor,
-  nearestRelay,
-  type Relay,
-  RELAY_NAMES,
-  roomPassword,
-  VC_RUNTIME_URL,
-} from "../emulators";
-import { type EmulatorSetup, errorText, NEEDS_NEWER_APP, useEmulatorSetup } from "../emulatorSetup";
+import { CLOSE_EMULATOR_VERSION, desktop, desktopIsAtLeast, isDesktop } from "../desktop";
+import { type EmulatorRelease, emulatorFor, nearestRelay, roomPassword, VC_RUNTIME_URL } from "../emulators";
+import { type EmulatorSetup, errorText, useEmulatorSetup } from "../emulatorSetup";
 
 type Window = "idle" | "opening" | "open" | "closed";
 
@@ -24,6 +16,9 @@ interface Props {
 }
 
 /** What each player sees while the party plays one of their own games. */
+// How long the host's RetroArch gets to list its relayed room before it's reopened.
+const RELAY_RETRY_MS = 20000;
+
 export function PlayPanel({ lobby, game, session, playerId, onRoomCode, onEnd }: Props) {
   const me = lobby.players.find((p) => p.id === playerId);
   const host = lobby.players.find((p) => p.isHost);
@@ -89,13 +84,10 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
   const password = useRef<{ startedAt: number; value: string } | null>(null);
   // True from opening the host's RetroArch until its new room has been shared.
   const awaitingRoom = useRef(false);
-  // How the host's RetroArch takes connections: directly (fastest), or through
-  // a relay server if friends can't reach it directly. `seenAt` is when its
-  // direct room first appeared in the lobby without friends being able to reach it.
-  const hosting = useRef<{ via: "direct" | Relay; canDirect: boolean; seenAt: number | null } | null>(null);
-  // The game (by start time) whose direct connection didn't work.
-  const directFailedFor = useRef<number | null>(null);
-  const [relayNote, setRelayNote] = useState<string | null>(null);
+  // When the host's RetroArch opened, and how many times it has reopened because
+  // the relay server didn't take its room.
+  const openedAt = useRef(0);
+  const [relayRetries, setRelayRetries] = useState(0);
 
   const launch = useCallback(
     async (mode: "host" | "join", code: string | null) => {
@@ -106,23 +98,13 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
           if (mode === "host") {
             if (password.current?.startedAt !== session.startedAt)
               password.current = { startedAt: session.startedAt, value: roomPassword() };
-            const canDirect = await desktopIsAtLeast(DIRECT_NETPLAY_VERSION);
-            const via = canDirect && directFailedFor.current !== session.startedAt ? "direct" : nearestRelay();
-            hosting.current = { via, canDirect, seenAt: null };
             // A room already listed under this name is from an earlier game or window.
-            staleCode.current = canDirect
-              ? await desktop
-                  .findRetroArchLobbyRoom(nickname)
-                  .then((found) => (found ? String(found.id) : null))
-                  .catch(() => null)
-              : await desktop.findRetroArchRoom(nickname).catch(() => null);
-            const how = { mode, sha1: game.sha1, relay: via, password: password.current.value } as const;
+            staleCode.current = await desktop.findRetroArchRoom(nickname).catch(() => null);
+            const how = { mode, sha1: game.sha1, relay: nearestRelay(), password: password.current.value } as const;
             await desktop.launchRetroArch(release, how, nickname, players);
+            openedAt.current = Date.now();
             awaitingRoom.current = true;
           } else {
-            // A direct room's code has no relay session, which older apps can't join.
-            const direct = code?.split("|")[2] === "";
-            if (direct && !(await desktopIsAtLeast(DIRECT_NETPLAY_VERSION))) throw new Error(NEEDS_NEWER_APP);
             await desktop.launchRetroArch(release, { mode, sha1: game.sha1, code: code ?? "" }, nickname, players);
           }
         } else if (mupen) {
@@ -181,34 +163,21 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
     const timer = setInterval(
       async () => {
         if (retro) {
-          const h = hosting.current;
-          if (!awaitingRoom.current || !password.current || !h) return;
-          let room: string | null;
-          if (h.canDirect) {
-            const found = await desktop.findRetroArchLobbyRoom(nickname).catch(() => null);
-            // Skip an earlier game's room, or one hosted the other way.
-            if (!found || String(found.id) === staleCode.current || found.direct !== (h.via === "direct")) return;
-            if (found.direct && !found.connectable) {
-              // The router may still be opening the port; give it a little while.
-              h.seenAt ??= Date.now();
-              if (Date.now() - h.seenAt < 15000 || !awaitingRoom.current) return;
-              awaitingRoom.current = false;
-              directFailedFor.current = session.startedAt;
-              const relay = nearestRelay();
-              setRelayNote(
-                `Your router didn't let friends connect to you directly, so this game goes through the ${RELAY_NAMES[relay]} relay server instead, which adds some lag.`,
-              );
-              await desktop.closeEmulator(release.emulator).catch(() => {});
-              void launch("host", null);
-              return;
-            }
-            room = found.room;
-          } else {
-            room = await desktop.findRetroArchRoom(nickname).catch(() => null);
-            if (!room || room === staleCode.current) return;
+          if (!awaitingRoom.current || !password.current) return;
+          const room = await desktop.findRetroArchRoom(nickname).catch(() => null);
+          if (!room || room === staleCode.current) {
+            // RetroArch sometimes fails to reach the relay server and never retries,
+            // so reopen it (apps that can close it themselves only).
+            if (Date.now() - openedAt.current < RELAY_RETRY_MS || !awaitingRoom.current) return;
+            if (!(await desktopIsAtLeast(CLOSE_EMULATOR_VERSION))) return;
+            awaitingRoom.current = false;
+            setRelayRetries((n) => n + 1);
+            await desktop.closeEmulator(release.emulator).catch(() => {});
+            void launch("host", null);
+            return;
           }
           const code = `${room}|${password.current.value}`;
-          if (code !== sharedCode && awaitingRoom.current) {
+          if (code !== sharedCode) {
             awaitingRoom.current = false;
             onRoomCode(code);
           }
@@ -220,7 +189,7 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
       retro ? 4000 : 1000,
     );
     return () => clearInterval(timer);
-  }, [isHost, retro, readCode, windowState, sharedCode, nickname, onRoomCode, launch, release.emulator, session.startedAt]);
+  }, [isHost, retro, readCode, windowState, sharedCode, nickname, onRoomCode, launch, release.emulator]);
 
   if (setup.status !== "ready") return <SetupMessage setup={setup} release={release} onRetry={retry} />;
 
@@ -233,7 +202,7 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
           {windowState === "opening" || windowState === "idle"
             ? `Opening ${release.name}…`
             : !session.roomCode
-              ? `${release.name} is open. Setting up the room for your friends… If Windows asks whether to allow ${release.name} on networks, click Allow.`
+              ? `${release.name} is open. Setting up the room for your friends…${relayRetries ? " The relay server didn't answer, so PartyLink is reopening it to try again." : ""}`
               : `Your friends' ${release.name} is joining. They drop into the game as they connect.`}
           {session.roomCode && (
             <>
@@ -242,7 +211,6 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
               type it when {release.name} asks.
             </>
           )}
-          {relayNote && <span className="muted"> {relayNote}</span>}
         </p>
       ) : isHost ? (
         <HostSteps
