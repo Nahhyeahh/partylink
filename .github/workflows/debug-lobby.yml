@@ -9,12 +9,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Relay server
+      - name: Reach the Sydney relay
         run: |
-          sudo bash .github/debug/relay-setup.sh
-          sleep 3
-          systemctl status partylink-relay --no-pager | head -5
-          ss -ltnp | grep 55435
+          for i in $(seq 1 6); do timeout 5 bash -c 'exec 3<>/dev/tcp/52.63.252.122/55435' && { echo "relay port open"; break; } || { echo "not yet"; sleep 20; }; done
       - name: Host and join through it
         run: |
           sudo apt-get install -y -qq p7zip-full xvfb libfuse2 libjack-jackd2-0 libpulse0 libasound2t64 libegl1 libgl1 libgles2 libvulkan1 libxkbcommon0 libwayland-client0 libwayland-egl1 libxrandr2 libxi6 libxinerama1 libxxf86vm1 libsdl2-2.0-0 libudev1 libusb-1.0-0 libv4l-0 libfreetype6 libopenal1 libxv1 libdrm2 libgbm1 >/dev/null
@@ -27,12 +24,12 @@ jobs:
             mkdir -p "$who"
             printf 'video_driver = "null"\naudio_driver = "null"\ninput_driver = "null"\n' > "$who/retroarch.cfg"
           done
-          printf 'config_save_on_exit = "false"\npause_nonactive = "false"\nnetplay_nickname = "PLown5126"\nnetplay_password = "pw123456"\nnetplay_public_announce = "true"\nnetplay_ip_port = "55435"\nnetplay_use_mitm_server = "true"\nnetplay_mitm_server = "custom"\nnetplay_custom_mitm_server = "127.0.0.1|55435"\nnetplay_input_latency_frames_min = "1"\nnetplay_input_latency_frames_range = "3"\n' > host/session.cfg
+          printf 'config_save_on_exit = "false"\npause_nonactive = "false"\nnetplay_nickname = "PLsyd5126"\nnetplay_password = "pw123456"\nnetplay_public_announce = "true"\nnetplay_ip_port = "55435"\nnetplay_use_mitm_server = "true"\nnetplay_mitm_server = "custom"\nnetplay_custom_mitm_server = "52.63.252.122|55435"\nnetplay_input_latency_frames_min = "1"\nnetplay_input_latency_frames_range = "3"\n' > host/session.cfg
           xvfb-run -a "$app" --verbose -L ./2048_libretro.so --config host/retroarch.cfg --appendconfig host/session.cfg -H > host.log 2>&1 &
           room=""
           for i in $(seq 1 12); do
             sleep 8
-            entry=$(curl -fsS http://lobby.libretro.com/list/ | jq -c '[.[] | .fields | select(.username=="PLown5126")][0]')
+            entry=$(curl -fsS http://lobby.libretro.com/list/ | jq -c '[.[] | .fields | select(.username=="PLsyd5126")][0]')
             echo "$entry" | jq -c '{id, ip_set: (.ip != ""), mitm_ip, mitm_port, mitm_session, connectable, has_password}'
             sess=$(echo "$entry" | jq -r '.mitm_session // ""')
             if [ -n "$sess" ]; then room="$(echo "$entry" | jq -r '.mitm_ip')|$(echo "$entry" | jq -r '.mitm_port')|$sess"; break; fi
@@ -46,4 +43,3 @@ jobs:
           fi
           echo "--- host"; grep -iE "netplay|mitm|tunnel|relay" host.log | head -20 || true
           echo "--- friend"; grep -iE "netplay|mitm|tunnel|relay|password" friend.log | head -20 || true
-          echo "--- relay log"; sudo cat /opt/partylink-relay/tunnel.log || true
