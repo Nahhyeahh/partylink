@@ -1,42 +1,49 @@
 name: Debug RetroArch lobby
-# Temporary: lists Australian rooms in libretro's lobby (addresses hidden).
+# Temporary: runs PartyLink's own relay server, hosts a room through it, and
+# has a second RetroArch join through it.
 on:
   push:
     branches: [debug-lobby]
 jobs:
-  lobby:
+  own-relay:
     runs-on: ubuntu-latest
     steps:
-      - name: Australian rooms
+      - uses: actions/checkout@v4
+      - name: Relay server
         run: |
-          for i in $(seq 1 1); do
-            date -u
-            curl -fsS -m 30 http://lobby.libretro.com/list/ | jq -c '.[] | .fields | select(.country=="au") | {id, username, game_name, core_name, retroarch_version, has_password, relayed: (.mitm_ip != ""), mitm_session_set: (.mitm_session != ""), port, connectable, host_method, created, updated}' || true
-            sleep 20
-          done
-  swap:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Re-host under one name
+          sudo bash .github/debug/relay-setup.sh
+          sleep 3
+          systemctl status partylink-relay --no-pager | head -5
+          ss -ltnp | grep 55435
+      - name: Host and join through it
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq p7zip-full xvfb libfuse2 libjack-jackd2-0 libpulse0 libasound2t64 libegl1 libgl1 libgles2 libvulkan1 libxkbcommon0 libwayland-client0 libwayland-egl1 libxrandr2 libxi6 libxinerama1 libxxf86vm1 libsdl2-2.0-0 libudev1 libusb-1.0-0 libv4l-0 libfreetype6 libopenal1 libxv1 libdrm2 libgbm1 >/dev/null
+          sudo apt-get install -y -qq p7zip-full xvfb libfuse2 libjack-jackd2-0 libpulse0 libasound2t64 libegl1 libgl1 libgles2 libvulkan1 libxkbcommon0 libwayland-client0 libwayland-egl1 libxrandr2 libxi6 libxinerama1 libxxf86vm1 libsdl2-2.0-0 libudev1 libusb-1.0-0 libv4l-0 libfreetype6 libopenal1 libxv1 libdrm2 libgbm1 >/dev/null
           curl -fsSL -o ra.7z https://buildbot.libretro.com/stable/1.22.2/linux/x86_64/RetroArch.7z
           7z x -y ra.7z >/dev/null
           app=$(find . -name '*.AppImage' | head -1); chmod +x "$app"
           curl -fsSL -o core.zip https://buildbot.libretro.com/nightly/linux/x86_64/latest/2048_libretro.so.zip
           unzip -o core.zip
-          mkdir -p user
-          printf 'video_driver = "null"\naudio_driver = "null"\ninput_driver = "null"\n' > user/retroarch.cfg
-          host() {
-            printf 'config_save_on_exit = "false"\npause_nonactive = "false"\nnetplay_nickname = "PLswap8402"\nnetplay_password = "%s"\nnetplay_nat_traversal = "%s"\nnetplay_public_announce = "true"\nnetplay_ip_port = "%s"\nnetplay_use_mitm_server = "%s"\nnetplay_mitm_server = "singapore"\n' "$1" "$2" "$4" "$3" > user/session.cfg
-            xvfb-run -a "$app" -L ./2048_libretro.so --config user/retroarch.cfg --appendconfig user/session.cfg -H > "ra-$1.log" 2>&1 &
-          }
-          show() { curl -fsS http://lobby.libretro.com/list/ | jq -c '.[] | .fields | select(.username=="PLswap8402") | {id, port, relayed: (.mitm_ip != ""), sess: .mitm_session, connectable, created, updated}' || true; }
-          stop() { pkill -9 -f AppImage || true; pkill -9 -f RetroArch || true; pkill -9 Xvfb || true; sleep 2; }
-          run() { host "$@"; for i in $(seq 1 5); do sleep 12; echo "$1 $i"; show; done; stop; }
-          run relayA false true 55435
-          run relayB false true 55435
-          run direct true false 55435
-          run relayC false true 55435
-          run relayD false true 55500
-          grep -ihE "mitm|relay|announc|tunnel" ra-*.log | sort | uniq -c | head -30 || true
+          for who in host friend; do
+            mkdir -p "$who"
+            printf 'video_driver = "null"\naudio_driver = "null"\ninput_driver = "null"\n' > "$who/retroarch.cfg"
+          done
+          printf 'config_save_on_exit = "false"\npause_nonactive = "false"\nnetplay_nickname = "PLown5126"\nnetplay_password = "pw123456"\nnetplay_public_announce = "true"\nnetplay_ip_port = "55435"\nnetplay_use_mitm_server = "true"\nnetplay_mitm_server = "custom"\nnetplay_custom_mitm_server = "127.0.0.1|55435"\nnetplay_input_latency_frames_min = "1"\nnetplay_input_latency_frames_range = "3"\n' > host/session.cfg
+          xvfb-run -a "$app" --verbose -L ./2048_libretro.so --config host/retroarch.cfg --appendconfig host/session.cfg -H > host.log 2>&1 &
+          room=""
+          for i in $(seq 1 12); do
+            sleep 8
+            entry=$(curl -fsS http://lobby.libretro.com/list/ | jq -c '[.[] | .fields | select(.username=="PLown5126")][0]')
+            echo "$entry" | jq -c '{id, ip_set: (.ip != ""), mitm_ip, mitm_port, mitm_session, connectable, has_password}'
+            sess=$(echo "$entry" | jq -r '.mitm_session // ""')
+            if [ -n "$sess" ]; then room="$(echo "$entry" | jq -r '.mitm_ip')|$(echo "$entry" | jq -r '.mitm_port')|$sess"; break; fi
+          done
+          echo "room: $room"
+          IFS='|' read -r mhost mport msess <<< "$room"
+          printf 'config_save_on_exit = "false"\npause_nonactive = "false"\nnetplay_nickname = "PLfriend"\nnetplay_password = "pw123456"\nnetplay_public_announce = "false"\nnetplay_use_mitm_server = "false"\n' > friend/session.cfg
+          if [ -n "$msess" ]; then
+            xvfb-run -a "$app" --verbose -L ./2048_libretro.so --config friend/retroarch.cfg --appendconfig friend/session.cfg -C "$mhost" --port "$mport" --mitm-session "$msess" > friend.log 2>&1 &
+            sleep 25
+          fi
+          echo "--- host"; grep -iE "netplay|mitm|tunnel|relay" host.log | head -20 || true
+          echo "--- friend"; grep -iE "netplay|mitm|tunnel|relay|password" friend.log | head -20 || true
+          echo "--- relay log"; sudo cat /opt/partylink-relay/tunnel.log || true
