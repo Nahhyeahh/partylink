@@ -15,6 +15,7 @@ fn main() {
         "find_retroarch_room",
         "find_retroarch_lobby_room",
         "close_emulator",
+        "relay_reachable",
         "launch_mupen",
         "read_mupen_room_code",
         "copy_mupen_room_code",

@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -280,8 +281,14 @@ pub enum RetroArchLaunch {
     /// Open the game with this fingerprint and host it, directly (`relay` is
     /// `direct`) or through a relay server.
     Host { sha1: String, relay: String, password: String },
-    /// Open this player's copy of the game and join the host with their join code.
-    Join { sha1: String, code: String },
+    /// Open this player's copy of the game and join the host with their join
+    /// code. `near` is set when the room is on the party's own nearby relay.
+    Join {
+        sha1: String,
+        code: String,
+        #[serde(default)]
+        near: bool,
+    },
 }
 
 fn retroarch_core(system: System) -> Option<emu::Core> {
@@ -314,14 +321,15 @@ pub fn launch_retroarch(
     let install_dir = release.install_dir(&root);
     let user_dir = app.path().app_local_data_dir().map_err(|e| e.to_string())?.join("retroarch-user");
 
-    let (sha1, host, password, join) = match &launch {
+    let (sha1, host, password, join, near_relay) = match &launch {
         RetroArchLaunch::Host { sha1, relay, password } => {
             let via = emu::HostVia::from_id(relay).ok_or("Unknown relay server.")?;
-            (sha1, Some(via), password.clone(), None)
+            let near = matches!(via, emu::HostVia::OwnRelay { .. });
+            (sha1, Some(via), password.clone(), None, near)
         }
-        RetroArchLaunch::Join { sha1, code } => {
+        RetroArchLaunch::Join { sha1, code, near } => {
             let join = emu::JoinCode::parse(code).ok_or("That isn't a RetroArch join code.")?;
-            (sha1, None, join.password.clone(), Some(join.room))
+            (sha1, None, join.password.clone(), Some(join.room), *near)
         }
     };
     let game = find_game(&app, sha1)?;
@@ -333,6 +341,7 @@ pub fn launch_retroarch(
         password: &password,
         players,
         host,
+        near_relay,
     })
     .map_err(|e| e.to_string())?;
 
@@ -385,6 +394,21 @@ pub async fn find_retroarch_lobby_room(nickname: String) -> Result<Option<LobbyR
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Whether the party's own relay server (`own:<host>:<port>`) is switched on and
+/// taking connections, so the host only uses it when it's there.
+#[tauri::command]
+pub async fn relay_reachable(relay: String) -> Result<bool, String> {
+    let Some(emu::HostVia::OwnRelay { host, port }) = emu::HostVia::from_id(&relay) else {
+        return Err("That isn't a relay server address.".into());
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok(addresses) = (host.as_str(), port).to_socket_addrs() else { return false };
+        addresses.into_iter().any(|a| TcpStream::connect_timeout(&a, Duration::from_secs(3)).is_ok())
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 fn read_lobby() -> Result<String, String> {

@@ -68,6 +68,21 @@ export function emulatorFor(system: GameSystem): EmulatorRelease | null {
 
 export type Relay = "nyc" | "madrid" | "saopaulo" | "singapore";
 
+/**
+ * The party's own relay server (libretro's netplay-tunnel-server, see
+ * server/relay), which is much closer than libretro's for players in
+ * Australia: an AWS server in Sydney that the host starts before a game night.
+ */
+export const OWN_RELAY = { host: "52.63.252.122", port: 55435, name: "Sydney" } as OwnRelay | null;
+
+export interface OwnRelay {
+  /** Its fixed public IP address. */
+  host: string;
+  port: number;
+  /** Where it is, for players to read. */
+  name: string;
+}
+
 export const RELAY_NAMES: Record<Relay, string> = {
   nyc: "New York",
   madrid: "Madrid",

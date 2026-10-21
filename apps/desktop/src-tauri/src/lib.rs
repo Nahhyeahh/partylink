@@ -30,6 +30,7 @@ pub fn run() {
             emulators::find_retroarch_room,
             emulators::find_retroarch_lobby_room,
             emulators::close_emulator,
+            emulators::relay_reachable,
             emulators::launch_mupen,
             emulators::read_mupen_room_code,
             emulators::copy_mupen_room_code,

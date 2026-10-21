@@ -229,6 +229,7 @@ fn session<'a>(dirs: &'a TempDir, host: bool, players: usize) -> RetroSession<'a
         password: "abcd1234",
         players,
         host: host.then_some(HostVia::Relay(Relay::Madrid)),
+        near_relay: false,
     }
 }
 
@@ -276,6 +277,22 @@ fn writes_retroarch_settings_for_host_and_friends() {
 }
 
 #[test]
+fn points_retroarch_at_the_partys_own_relay() {
+    let tmp = TempDir::new().unwrap();
+    let mut own = session(&tmp, true, 2);
+    own.host = Some(HostVia::OwnRelay { host: "13.210.1.2".into(), port: 55435 });
+    own.near_relay = true;
+    prepare_retroarch_session(&own).unwrap();
+    let text = fs::read_to_string(tmp.path().join("partylink-session.cfg")).unwrap();
+    assert!(text.contains("netplay_use_mitm_server = \"true\""));
+    assert!(text.contains("netplay_mitm_server = \"custom\""));
+    assert!(text.contains("netplay_custom_mitm_server = \"13.210.1.2|55435\""));
+    assert!(text.contains("netplay_nat_traversal = \"false\""));
+    assert!(text.contains("netplay_input_latency_frames_min = \"1\""));
+    assert!(text.contains("netplay_input_latency_frames_range = \"3\""));
+}
+
+#[test]
 fn builds_retroarch_host_and_join_options() {
     let install = Path::new("/ra");
     let user = Path::new("/user");
@@ -306,4 +323,11 @@ fn knows_the_relay_servers() {
     assert!(Relay::from_id("custom").is_none());
     assert_eq!(HostVia::from_id("direct"), Some(HostVia::Direct));
     assert_eq!(HostVia::from_id("nyc"), Some(HostVia::Relay(Relay::NewYork)));
+    assert_eq!(
+        HostVia::from_id("own:13.210.1.2:55435"),
+        Some(HostVia::OwnRelay { host: "13.210.1.2".into(), port: 55435 })
+    );
+    assert_eq!(HostVia::from_id("own:13.210.1.2"), None);
+    assert_eq!(HostVia::from_id("own:bad host:55435"), None);
+    assert_eq!(HostVia::from_id("own:13.210.1.2:0"), None);
 }

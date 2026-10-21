@@ -1,7 +1,15 @@
 import type { LobbyState, OwnGame, PlaySession } from "@partylink/protocol";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { CLOSE_EMULATOR_VERSION, desktop, desktopIsAtLeast, isDesktop } from "../desktop";
-import { type EmulatorRelease, emulatorFor, nearestRelay, roomPassword, VC_RUNTIME_URL } from "../emulators";
+import { CLOSE_EMULATOR_VERSION, desktop, desktopIsAtLeast, isDesktop, OWN_RELAY_VERSION } from "../desktop";
+import {
+  type EmulatorRelease,
+  emulatorFor,
+  nearestRelay,
+  OWN_RELAY,
+  RELAY_NAMES,
+  roomPassword,
+  VC_RUNTIME_URL,
+} from "../emulators";
 import { type EmulatorSetup, errorText, useEmulatorSetup } from "../emulatorSetup";
 
 type Window = "idle" | "opening" | "open" | "closed";
@@ -18,6 +26,26 @@ interface Props {
 /** What each player sees while the party plays one of their own games. */
 // How long the host's RetroArch gets to list its relayed room before it's reopened.
 const RELAY_RETRY_MS = 20000;
+
+// The relay server the host's RetroArch uses: the party's own when it's switched
+// on and this app can use it, otherwise libretro's nearest. `note` says why the
+// party's own isn't used.
+async function pickRelay(): Promise<{ id: string; note: string | null }> {
+  const fallback = nearestRelay();
+  if (!OWN_RELAY) return { id: fallback, note: null };
+  const via = `the ${RELAY_NAMES[fallback]} relay server, which adds lag`;
+  if (!(await desktopIsAtLeast(OWN_RELAY_VERSION)))
+    return {
+      id: fallback,
+      note: `This game goes through ${via}. Install the latest PartyLink to play through the ${OWN_RELAY.name} one.`,
+    };
+  const own = `own:${OWN_RELAY.host}:${OWN_RELAY.port}`;
+  if (await desktop.relayReachable(own).catch(() => false)) return { id: own, note: null };
+  return {
+    id: fallback,
+    note: `The ${OWN_RELAY.name} relay server is switched off, so this game goes through ${via}. To use it, start it in AWS, then end this game and start it again.`,
+  };
+}
 
 export function PlayPanel({ lobby, game, session, playerId, onRoomCode, onEnd }: Props) {
   const me = lobby.players.find((p) => p.id === playerId);
@@ -88,6 +116,8 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
   // the relay server didn't take its room.
   const openedAt = useRef(0);
   const [relayRetries, setRelayRetries] = useState(0);
+  // Why the host's game isn't going through the party's own relay server.
+  const [relayNote, setRelayNote] = useState<string | null>(null);
 
   const launch = useCallback(
     async (mode: "host" | "join", code: string | null) => {
@@ -100,12 +130,17 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
               password.current = { startedAt: session.startedAt, value: roomPassword() };
             // A room already listed under this name is from an earlier game or window.
             staleCode.current = await desktop.findRetroArchRoom(nickname).catch(() => null);
-            const how = { mode, sha1: game.sha1, relay: nearestRelay(), password: password.current.value } as const;
+            const relay = await pickRelay();
+            setRelayNote(relay.note);
+            const how = { mode, sha1: game.sha1, relay: relay.id, password: password.current.value } as const;
             await desktop.launchRetroArch(release, how, nickname, players);
             openedAt.current = Date.now();
             awaitingRoom.current = true;
           } else {
-            await desktop.launchRetroArch(release, { mode, sha1: game.sha1, code: code ?? "" }, nickname, players);
+            // Through the party's own nearby relay, input needs less holding back.
+            const near = OWN_RELAY !== null && code?.split("|")[0] === OWN_RELAY.host;
+            const how = { mode, sha1: game.sha1, code: code ?? "", ...(near && { near }) } as const;
+            await desktop.launchRetroArch(release, how, nickname, players);
           }
         } else if (mupen) {
           // Mupen's netplay is only in its window, so friends paste the code there.
@@ -211,6 +246,7 @@ function EmulatorSteps({ release, game, session, isHost, hostName, nickname, pla
               type it when {release.name} asks.
             </>
           )}
+          {relayNote && <span className="muted"> {relayNote}</span>}
         </p>
       ) : isHost ? (
         <HostSteps
