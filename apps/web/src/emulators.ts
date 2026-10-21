@@ -71,9 +71,9 @@ export type Relay = "nyc" | "madrid" | "saopaulo" | "singapore";
 /**
  * The party's own relay server (libretro's netplay-tunnel-server, see
  * server/relay), which is much closer than libretro's for players in
- * Australia. Null until it's set up.
+ * Australia: an AWS server in Sydney that the host starts before a game night.
  */
-export const OWN_RELAY = null as OwnRelay | null;
+export const OWN_RELAY = { host: "52.63.252.122", port: 55435, name: "Sydney" } as OwnRelay | null;
 
 export interface OwnRelay {
   /** Its fixed public IP address. */

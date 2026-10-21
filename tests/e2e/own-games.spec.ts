@@ -55,10 +55,10 @@ async function fakeDesktop(
   folder: string | null,
   games: FakeGame[],
   roomCode = "a1B2c3D4",
-  { version = "0.3.4", relayFailsFirst = false } = {},
+  { version = "0.3.4", relayFailsFirst = false, ownRelayOn = false } = {},
 ) {
   await page.addInitScript(
-    ({ folder, games, roomCode, version, relayFailsFirst }) => {
+    ({ folder, games, roomCode, version, relayFailsFirst, ownRelayOn }) => {
       let hostLaunches = 0;
       let saved = folder;
       let next = 1;
@@ -117,9 +117,14 @@ async function fakeDesktop(
               return clipboard;
             case "launch_retroarch":
               // The first try can fail to reach the relay server, leaving no relayed room.
-              if ((args.launch as { mode: string }).mode === "host" && !(relayFailsFirst && hostLaunches++ === 0))
-                setTimeout(() => (retroRoom = "relay.example.org|55435|NewSession=="), 500);
+              if ((args.launch as { mode: string }).mode === "host" && !(relayFailsFirst && hostLaunches++ === 0)) {
+                const own = (args.launch as { relay: string }).relay.startsWith("own:");
+                const room = own ? "52.63.252.122|55435|OwnSession==" : "relay.example.org|55435|NewSession==";
+                setTimeout(() => (retroRoom = room), 500);
+              }
               return null;
+            case "relay_reachable":
+              return ownRelayOn;
             case "close_emulator":
               return null;
             case "plugin:app|version":
@@ -141,7 +146,7 @@ async function fakeDesktop(
         },
       };
     },
-    { folder, games, roomCode, version, relayFailsFirst },
+    { folder, games, roomCode, version, relayFailsFirst, ownRelayOn },
   );
 }
 
@@ -379,4 +384,49 @@ test("the host's RetroArch reopens when the relay server doesn't take its room",
   expect(await launches(host, "close_emulator")).toHaveLength(1);
   const [join] = await launches(friend, "launch_retroarch");
   expect((join as unknown as { code: string }).code).toMatch(/^relay\.example\.org\|55435\|NewSession==\|/);
+});
+
+async function startCrashBashParty(browser: Browser, hostOptions: Parameters<typeof fakeDesktop>[4]) {
+  const host = await newPlayer(browser);
+  const friend = await newPlayer(browser, "Australia/Sydney");
+  await fakeDesktop(host, "C:\\Games", [CRASH_BASH], undefined, hostOptions);
+  await fakeDesktop(friend, "D:\\Roms", [{ ...CRASH_BASH, path: "D:\\Roms\\crash.cue" }], undefined, {
+    version: "0.3.5",
+  });
+
+  await host.goto("/");
+  await host.getByLabel("Your name").fill("Adrian");
+  await host.getByRole("button", { name: "Create a party" }).click();
+  const code = (await host.locator(".room-code").textContent())?.trim() ?? "";
+  await friend.goto(`/?room=${code}`);
+  await friend.getByLabel("Your name").fill("Sam");
+  await friend.getByRole("button", { name: "Join", exact: true }).click();
+
+  await host.getByRole("button", { name: "Choose" }).click();
+  await host.locator(".game-picker").getByRole("button", { name: /Crash Bash/ }).click();
+  await expect(playerRow(host, "Sam")).toContainText("Has the game");
+  await host.getByRole("button", { name: "I'm ready" }).click();
+  await friend.getByRole("button", { name: "I'm ready" }).click();
+  await host.getByRole("button", { name: "Start game" }).click();
+  await expect(friend.getByText("RetroArch is open and joining Adrian's game.", { exact: false })).toBeVisible();
+  return { host, friend };
+}
+
+test("RetroArch games go through the party's own relay when it's on", async ({ browser }) => {
+  const { host, friend } = await startCrashBashParty(browser, { version: "0.3.5", ownRelayOn: true });
+  const [hostLaunch] = await launches(host, "launch_retroarch");
+  expect(hostLaunch).toMatchObject({ mode: "host", relay: "own:52.63.252.122:55435" });
+  const [join] = await launches(friend, "launch_retroarch");
+  expect(join).toMatchObject({ mode: "join", near: true });
+  expect((join as unknown as { code: string }).code).toMatch(/^52\.63\.252\.122\|55435\|OwnSession==\|/);
+  await expect(host.getByText("relay server is switched off", { exact: false })).toHaveCount(0);
+});
+
+test("RetroArch games use libretro's relay when the party's own is off", async ({ browser }) => {
+  const { host, friend } = await startCrashBashParty(browser, { version: "0.3.5", ownRelayOn: false });
+  const [hostLaunch] = await launches(host, "launch_retroarch");
+  expect(hostLaunch).toMatchObject({ mode: "host", relay: "madrid" });
+  await expect(host.getByText("The Sydney relay server is switched off", { exact: false })).toBeVisible();
+  const [join] = await launches(friend, "launch_retroarch");
+  expect(join).not.toHaveProperty("near");
 });
