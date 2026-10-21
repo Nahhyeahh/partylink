@@ -25,6 +25,7 @@
     "allow-find-retroarch-room",
     "allow-find-retroarch-lobby-room",
     "allow-close-emulator",
+    "allow-relay-reachable",
     "allow-launch-mupen",
     "allow-read-mupen-room-code",
     "allow-copy-mupen-room-code"

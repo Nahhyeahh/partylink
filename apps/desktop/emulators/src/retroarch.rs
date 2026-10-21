@@ -1,11 +1,11 @@
 // RetroArch ---------------------------------------------------------------------
 //
-// RetroArch runs PS1, SNES, NES and Mega Drive games through "cores". The host
-// first tries a direct connection, opening a port on their router with UPnP,
-// which is fastest. If the lobby says friends can't reach it, the game goes
-// through one of libretro's relay servers instead. Either way the host's room
-// is announced to libretro's lobby list with a password only the party knows,
-// and the host's app reads the room's address back from the list.
+// RetroArch runs PS1, SNES, NES and Mega Drive games through "cores". The host's
+// games go through a relay server: the party's own (like one in Sydney), or one
+// of libretro's. RetroArch can also host directly, opening a port on the router
+// with UPnP. Either way the host's room is announced to libretro's lobby list
+// with a password only the party knows, and the host's app reads the room's
+// address back from the list.
 
 use crate::clean_nickname;
 use serde_json::Value;
@@ -66,22 +66,30 @@ impl Relay {
 }
 
 /// How the host's RetroArch takes connections.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostVia {
     /// Friends connect straight to the host, through a port opened with UPnP.
     Direct,
     /// Everyone connects through a libretro relay server.
     Relay(Relay),
+    /// Everyone connects through the party's own relay server (libretro's
+    /// netplay-tunnel-server), at this address.
+    OwnRelay { host: String, port: u16 },
 }
 
 impl HostVia {
-    /// `direct`, or a relay's id.
+    /// `direct`, a libretro relay's id, or `own:<host>:<port>`.
     pub fn from_id(id: &str) -> Option<Self> {
         if id == "direct" {
-            Some(Self::Direct)
-        } else {
-            Relay::from_id(id).map(Self::Relay)
+            return Some(Self::Direct);
         }
+        if let Some(address) = id.strip_prefix("own:") {
+            let (host, port) = address.rsplit_once(':')?;
+            let port = port.parse().ok().filter(|&p| p != 0)?;
+            let room = RelayRoom { host: host.into(), port, session: String::new() };
+            return room.is_valid().then(|| Self::OwnRelay { host: host.into(), port });
+        }
+        Relay::from_id(id).map(Self::Relay)
     }
 }
 
@@ -221,6 +229,9 @@ pub struct RetroSession<'a> {
     pub players: usize,
     /// Set for the host: how friends reach it.
     pub host: Option<HostVia>,
+    /// The game goes through the party's own nearby relay, so input needs less
+    /// holding back.
+    pub near_relay: bool,
 }
 
 fn cfg_line(key: &str, value: impl std::fmt::Display) -> String {
@@ -236,9 +247,10 @@ fn path_str(path: &Path) -> String {
 const MAIN_CONFIG: &str = "retroarch.cfg";
 const SESSION_CONFIG: &str = "partylink-session.cfg";
 const CORE_OPTIONS: &str = "partylink-core-options.cfg";
-/// Frames every player's input is held back by, and how many more RetroArch may add.
-const INPUT_LATENCY_FRAMES_MIN: u32 = 4;
-const INPUT_LATENCY_FRAMES_RANGE: u32 = 6;
+/// Frames every player's input is held back by, and how many more RetroArch may
+/// add: more for a far-off relay, fewer for the party's own nearby one.
+const INPUT_LATENCY_FRAMES: (u32, u32) = (4, 6);
+const OWN_RELAY_INPUT_LATENCY_FRAMES: (u32, u32) = (1, 3);
 /// RetroArch's usual netplay port.
 const DEFAULT_PORT: u16 = 55435;
 
@@ -274,8 +286,11 @@ pub fn prepare_retroarch_session(session: &RetroSession) -> io::Result<()> {
     )?;
 
     let host = session.host.is_some();
-    let relay = match session.host {
-        Some(HostVia::Relay(relay)) => Some(relay),
+    let (latency_min, latency_range) =
+        if session.near_relay { OWN_RELAY_INPUT_LATENCY_FRAMES } else { INPUT_LATENCY_FRAMES };
+    let relay = match &session.host {
+        Some(HostVia::Relay(relay)) => Some(relay.id().to_string()),
+        Some(HostVia::OwnRelay { .. }) => Some("custom".to_string()),
         _ => None,
     };
     let mut text = vec![
@@ -296,8 +311,8 @@ pub fn prepare_retroarch_session(session: &RetroSession) -> io::Result<()> {
         // Over a slow link (like Australia to the Singapore relay) RetroArch keeps
         // rewinding to fix up late inputs, which makes the game stutter. Delaying
         // everyone's input a few frames, and more when the link needs it, keeps it smooth.
-        cfg_line("netplay_input_latency_frames_min", INPUT_LATENCY_FRAMES_MIN),
-        cfg_line("netplay_input_latency_frames_range", INPUT_LATENCY_FRAMES_RANGE),
+        cfg_line("netplay_input_latency_frames_min", latency_min),
+        cfg_line("netplay_input_latency_frames_range", latency_range),
         // A direct host asks the router to open its port (UPnP).
         cfg_line("netplay_nat_traversal", session.host == Some(HostVia::Direct)),
         cfg_line("netplay_ip_port", DEFAULT_PORT),
@@ -305,8 +320,11 @@ pub fn prepare_retroarch_session(session: &RetroSession) -> io::Result<()> {
         cfg_line("netplay_public_announce", host),
         cfg_line("netplay_use_mitm_server", relay.is_some()),
     ];
-    if let Some(relay) = relay {
-        text.push(cfg_line("netplay_mitm_server", relay.id()));
+    if let Some(relay) = &relay {
+        text.push(cfg_line("netplay_mitm_server", relay));
+    }
+    if let Some(HostVia::OwnRelay { host, port }) = &session.host {
+        text.push(cfg_line("netplay_custom_mitm_server", format!("{host}|{port}")));
     }
     fs::write(user.join(SESSION_CONFIG), text.concat())
 }

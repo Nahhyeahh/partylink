@@ -55,7 +55,7 @@ const releaseArg = ({ emulator, tag, asset, sha256 }: ReleaseArg): ReleaseArg =>
 export type DolphinLaunch = { mode: "host"; sha1: string } | { mode: "join"; code: string };
 export type RetroArchLaunch =
   | { mode: "host"; sha1: string; relay: string; password: string }
-  | { mode: "join"; sha1: string; code: string };
+  | { mode: "join"; sha1: string; code: string; near?: boolean };
 
 /** The host's RetroArch room as libretro's lobby lists it. */
 export interface LobbyRoom {
@@ -86,6 +86,9 @@ export const DIRECT_NETPLAY_VERSION = "0.3.3";
 /** Desktop apps from this version on can close an emulator they opened. */
 export const CLOSE_EMULATOR_VERSION = "0.3.3";
 
+/** Desktop apps from this version on can host through the party's own relay server. */
+export const OWN_RELAY_VERSION = "0.3.5";
+
 export const desktop = {
   getGamesFolder: () => invoke<string | null>("get_games_folder"),
   chooseGamesFolder: () => invoke<string | null>("choose_games_folder"),
@@ -113,6 +116,8 @@ export const desktop = {
     invoke<LobbyRoom | null>("find_retroarch_lobby_room", { nickname }),
   /** Closes an emulator PartyLink opened (app 0.3.3 and later). */
   closeEmulator: (emulator: string) => invoke<void>("close_emulator", { emulator }),
+  /** Whether the party's own relay server (`own:<host>:<port>`) is switched on (app 0.3.5 and later). */
+  relayReachable: (relay: string) => invoke<boolean>("relay_reachable", { relay }),
   launchMupen: (release: ReleaseArg, nickname: string) =>
     invoke<void>("launch_mupen", { release: releaseArg(release), nickname }),
   readMupenRoomCode: () => invoke<string | null>("read_mupen_room_code"),
